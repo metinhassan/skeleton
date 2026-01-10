@@ -1,0 +1,3 @@
+[submodule "src/authlib"]
+	path = src/authlib
+	url = git@github.com:metinhassan/authlib.git
