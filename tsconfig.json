@@ -16,8 +16,10 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@auth/*": ["src/auth/*"]
+      "@authlib/core": ["src/authlib/packages/auth-core/src"],
+      "@authlib/mock": ["src/authlib/packages/auth-mock/src"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/authlib"]
 }
