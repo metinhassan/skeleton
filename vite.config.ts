@@ -4,7 +4,8 @@ import { resolve } from 'path';
 export default defineConfig({
   resolve: {
     alias: {
-      '@auth': resolve(__dirname, 'src/auth'),
+      '@authlib/core': resolve(__dirname, 'src/authlib/packages/auth-core/src'),
+      '@authlib/mock': resolve(__dirname, 'src/authlib/packages/auth-mock/src'),
     },
   },
   server: {

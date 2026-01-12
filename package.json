@@ -5,13 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "npm run build:authlib && tsc && vite build",
+    "build:authlib": "npm run --prefix src/authlib build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
   "keywords": ["typescript", "login", "skeleton"],
   "author": "",
   "license": "MIT",
+  "dependencies": {
+    "@authlib/core": "file:src/authlib/packages/auth-core",
+    "@authlib/mock": "file:src/authlib/packages/auth-mock"
+  },
   "devDependencies": {
     "typescript": "^5.3.3",
     "vite": "^5.0.10"
