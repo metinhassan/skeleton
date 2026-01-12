@@ -15,15 +15,15 @@
             <h1 class="login-title">Welcome</h1>
             <p class="login-subtitle">Sign in to continue</p>
 
-            <form id="login-form" class="login-form" method="POST" action="javascript:void(0)">
+            <form id="login-form" class="login-form">
               <div class="form-group">
-                <label for="username">Username</label>
+                <label for="email">Email</label>
                 <input
-                  type="text"
-                  id="username"
-                  name="username"
-                  placeholder="Enter your username"
-                  autocomplete="username"
+                  type="email"
+                  id="email"
+                  name="email"
+                  placeholder="Enter your email"
+                  autocomplete="email"
                   required
                 />
               </div>
@@ -50,12 +50,19 @@
 
             <div class="login-footer">
               <p class="hint">
-                Use mock credentials from <code>@authlib/mock</code>
+                Don't have an account?
+                <a href="#" id="switch-to-register" class="link">Sign up</a>
+              </p>
+              <p class="hint">
+                Demo: <code>admin@example.com / admin123</code>
               </p>
             </div>
           </div>
         </div>
       </div>
+
+      <!-- Registration View -->
+      <div id="register-view" class="view" hidden></div>
 
       <!-- Dashboard View (shown after login) -->
       <div id="dashboard-view" class="view" hidden>
@@ -63,6 +70,7 @@
           <h1>Dashboard</h1>
           <div class="user-info">
             <span id="user-name"></span>
+            <button id="edit-profile-btn" class="btn btn-outline">Edit Profile</button>
             <button id="logout-btn" class="btn btn-secondary">Logout</button>
           </div>
         </header>
@@ -74,6 +82,9 @@
           </div>
         </main>
       </div>
+
+      <!-- Profile Edit View -->
+      <div id="profile-view" class="view" hidden></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

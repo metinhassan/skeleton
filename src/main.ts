@@ -1,47 +1,74 @@
-import { getMockUsers, generateMockTokens } from '@authlib/mock';
-import type { MockUser } from '@authlib/mock';
+/**
+ * Frontend app using server-side cookie authentication
+ * Cookies are HttpOnly and managed by the server
+ */
 
-interface AuthState {
-  isAuthenticated: boolean;
-  user: MockUser | null;
-  accessToken: string | null;
+import { RegistrationForm } from './components/registration.js';
+import { ProfileEdit } from './components/profile-edit.js';
+
+interface User {
+  id: string;
+  email: string;
+  name?: string;
+  roles?: string[];
 }
 
-const AUTH_STORAGE_KEY = 'skeleton_auth_state';
+interface AuthResponse {
+  authenticated: boolean;
+  user?: User;
+}
+
+interface LoginResponse {
+  success: boolean;
+  user?: User;
+  error?: string;
+}
+
+type ViewName = 'login' | 'register' | 'dashboard' | 'profile';
 
 class App {
-  private state: AuthState;
+  private user: User | null = null;
+  private currentView: ViewName = 'login';
+
+  // Views
   private loginView: HTMLElement;
+  private registerView: HTMLElement;
   private dashboardView: HTMLElement;
+  private profileView: HTMLElement;
+
+  // Login form elements
   private loginForm: HTMLFormElement;
-  private usernameInput: HTMLInputElement;
+  private emailInput: HTMLInputElement;
   private passwordInput: HTMLInputElement;
   private loginBtn: HTMLButtonElement;
   private errorMessage: HTMLElement;
+
+  // Dashboard elements
   private logoutBtn: HTMLButtonElement;
+  private editProfileBtn: HTMLButtonElement;
   private userNameDisplay: HTMLElement;
 
   constructor() {
-    // Load state from storage or use defaults
-    this.state = this.loadState() ?? {
-      isAuthenticated: false,
-      user: null,
-      accessToken: null,
-    };
-
-    // Get DOM elements
+    // Get view elements
     this.loginView = this.getElement('#login-view');
+    this.registerView = this.getElement('#register-view');
     this.dashboardView = this.getElement('#dashboard-view');
+    this.profileView = this.getElement('#profile-view');
+
+    // Get login form elements
     this.loginForm = this.getElement('#login-form') as HTMLFormElement;
-    this.usernameInput = this.getElement('#username') as HTMLInputElement;
+    this.emailInput = this.getElement('#email') as HTMLInputElement;
     this.passwordInput = this.getElement('#password') as HTMLInputElement;
     this.loginBtn = this.getElement('#login-btn') as HTMLButtonElement;
     this.errorMessage = this.getElement('#error-message');
+
+    // Get dashboard elements
     this.logoutBtn = this.getElement('#logout-btn') as HTMLButtonElement;
+    this.editProfileBtn = this.getElement('#edit-profile-btn') as HTMLButtonElement;
     this.userNameDisplay = this.getElement('#user-name');
 
     this.bindEvents();
-    this.initializeView();
+    this.checkAuth();
   }
 
   private getElement(selector: string): HTMLElement {
@@ -53,91 +80,178 @@ class App {
   }
 
   private bindEvents(): void {
-    this.loginForm.addEventListener('submit', this.handleLogin.bind(this));
-    this.logoutBtn.addEventListener('click', this.handleLogout.bind(this));
-
-    // Clear error on input
-    this.usernameInput.addEventListener('input', () => this.hideError());
+    // Login form events
+    this.loginForm.addEventListener('submit', (e) => this.handleLogin(e));
+    this.emailInput.addEventListener('input', () => this.hideError());
     this.passwordInput.addEventListener('input', () => this.hideError());
+
+    // Switch to register link
+    const switchToRegister = document.querySelector('#switch-to-register');
+    if (switchToRegister) {
+      switchToRegister.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.showRegister();
+      });
+    }
+
+    // Dashboard events
+    this.logoutBtn.addEventListener('click', () => this.handleLogout());
+    this.editProfileBtn.addEventListener('click', () => this.showProfile());
   }
 
-  private initializeView(): void {
-    if (this.state.isAuthenticated) {
-      this.showDashboard();
-    } else {
+  /**
+   * Check authentication status with the server
+   */
+  private async checkAuth(): Promise<void> {
+    try {
+      const response = await fetch('/auth/me', {
+        credentials: 'include',
+      });
+
+      const data: AuthResponse = await response.json();
+
+      if (data.authenticated && data.user) {
+        this.user = data.user;
+        this.showDashboard();
+      } else {
+        this.showLogin();
+      }
+    } catch (error) {
+      console.error('Auth check failed:', error);
       this.showLogin();
     }
   }
 
+  /**
+   * Handle login form submission
+   */
   private async handleLogin(event: Event): Promise<void> {
     event.preventDefault();
 
-    const username = this.usernameInput.value.trim();
+    const email = this.emailInput.value.trim();
     const password = this.passwordInput.value;
 
-    if (!username || !password) {
-      this.showError('Please enter username and password');
+    if (!email || !password) {
+      this.showError('Please enter email and password');
       return;
     }
 
     this.setLoading(true);
     this.hideError();
 
-    // Simulate network delay
-    await this.delay(500);
+    try {
+      const response = await fetch('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ email, password }),
+      });
 
-    // Validate against mock users from authlib
-    const mockUsers = getMockUsers();
-    const user = mockUsers.find(
-      (u) => u.username === username && u.password === password
-    );
+      const data: LoginResponse = await response.json();
 
-    this.setLoading(false);
+      if (!response.ok || !data.success) {
+        this.showError(data.error || 'Invalid email or password');
+        this.setLoading(false);
+        return;
+      }
 
-    if (!user) {
-      this.showError('Invalid username or password');
-      return;
+      if (data.user) {
+        this.user = data.user;
+        this.showDashboard();
+      }
+    } catch (error) {
+      console.error('Login failed:', error);
+      this.showError('Login failed. Please try again.');
+    } finally {
+      this.setLoading(false);
     }
-
-    // Generate mock tokens using authlib
-    const tokens = generateMockTokens(user);
-
-    // Update state
-    this.state = {
-      isAuthenticated: true,
-      user,
-      accessToken: tokens.accessToken,
-    };
-
-    this.saveState();
-    this.showDashboard();
   }
 
-  private handleLogout(): void {
-    this.state = {
-      isAuthenticated: false,
-      user: null,
-      accessToken: null,
-    };
+  /**
+   * Logout via server endpoint
+   */
+  private async handleLogout(): Promise<void> {
+    try {
+      await fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
 
-    this.clearState();
-    this.showLogin();
+      this.user = null;
+      this.showLogin();
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  }
+
+  /**
+   * Show a specific view, hiding all others
+   */
+  private showView(view: ViewName): void {
+    this.currentView = view;
+
+    this.loginView.hidden = view !== 'login';
+    this.registerView.hidden = view !== 'register';
+    this.dashboardView.hidden = view !== 'dashboard';
+    this.profileView.hidden = view !== 'profile';
   }
 
   private showLogin(): void {
-    this.dashboardView.hidden = true;
-    this.loginView.hidden = false;
+    this.showView('login');
     this.loginForm.reset();
     this.hideError();
-    this.usernameInput.focus();
+    this.emailInput.focus();
+  }
+
+  private showRegister(): void {
+    this.showView('register');
+
+    new RegistrationForm({
+      container: this.registerView,
+      onSuccess: (user) => {
+        this.user = user;
+        this.showDashboard();
+      },
+      onSwitchToLogin: () => {
+        this.showLogin();
+      },
+    });
   }
 
   private showDashboard(): void {
-    if (this.state.user) {
-      this.userNameDisplay.textContent = `Welcome, ${this.state.user.username}`;
+    if (this.user) {
+      const displayName = this.user.name || this.user.email;
+      this.userNameDisplay.textContent = `Welcome, ${displayName}`;
     }
-    this.loginView.hidden = true;
-    this.dashboardView.hidden = false;
+    this.showView('dashboard');
+  }
+
+  private showProfile(): void {
+    if (!this.user) return;
+
+    this.showView('profile');
+
+    new ProfileEdit({
+      container: this.profileView,
+      user: {
+        id: this.user.id,
+        email: this.user.email,
+        name: this.user.name || '',
+        roles: this.user.roles || [],
+      },
+      onUpdate: (updatedUser) => {
+        this.user = {
+          ...this.user!,
+          ...updatedUser,
+        };
+        this.userNameDisplay.textContent = `Welcome, ${updatedUser.name}`;
+      },
+      onClose: () => {
+        this.showDashboard();
+      },
+    });
   }
 
   private setLoading(loading: boolean): void {
@@ -158,35 +272,6 @@ class App {
 
   private hideError(): void {
     this.errorMessage.hidden = true;
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  private saveState(): void {
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(this.state));
-    } catch (error) {
-      console.error('Failed to save auth state:', error);
-    }
-  }
-
-  private loadState(): AuthState | null {
-    try {
-      const data = localStorage.getItem(AUTH_STORAGE_KEY);
-      return data ? JSON.parse(data) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private clearState(): void {
-    try {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-    } catch (error) {
-      console.error('Failed to clear auth state:', error);
-    }
   }
 }
 

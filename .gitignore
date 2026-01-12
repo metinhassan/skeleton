@@ -22,3 +22,14 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
+
+# Local HTTPS certificates
+certs/
+
+# SQLite database
+data/
+
+# Test output
+coverage/
+playwright-report/
+test-results/
