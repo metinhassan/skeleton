@@ -3,7 +3,7 @@
  */
 
 import { beforeAll, afterAll, afterEach } from 'vitest';
-import { resetDatabase } from '../server/db/database.js';
+import { resetDatabase, closeDatabase } from '../server/db/database.js';
 
 // Set test environment
 process.env.NODE_ENV = 'test';
@@ -21,5 +21,5 @@ afterEach(() => {
 
 // Close connections after all tests
 afterAll(() => {
-  // Cleanup handled by resetDatabase or individual tests
+  closeDatabase();
 });

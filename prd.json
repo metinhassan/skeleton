@@ -1,0 +1,805 @@
+{
+  "document": {
+    "title": "Tennis Club Tournament & Competition Platform",
+    "version": "1.0",
+    "type": "Product Requirements Document",
+    "status": "MVP-focused",
+    "audience": ["Engineering", "Product", "Design", "Founders"]
+  },
+  "existingInfrastructure": {
+    "description": "This PRD assumes integration with an existing project that has basic authentication already implemented",
+    "availableCapabilities": [
+      "User registration and login",
+      "Session management",
+      "Basic user model with unique identifiers"
+    ],
+    "integrationApproach": {
+      "principle": "Leverage and extend the existing auth system rather than building from scratch",
+      "guidelines": [
+        "All new role and permission features should build on top of existing user accounts",
+        "Club membership and roles are an extension layer, not a replacement for base auth",
+        "Reuse existing session tokens and authentication middleware",
+        "Player profiles link to existing user accounts when a user claims their profile",
+        "Audit logging should integrate with any existing logging infrastructure"
+      ]
+    }
+  },
+  "problemStatement": {
+    "summary": "Most tennis clubs run tournaments using spreadsheets, PDFs, whiteboards, or fragmented tools",
+    "painPoints": [
+      "Cannot handle multiple tournament formats cleanly",
+      "Error-prone when scores change or disputes occur",
+      "Require manual draw updates and recalculation of standings",
+      "Poor mobile usability for courtside score entry",
+      "Difficult for players to follow in real time"
+    ]
+  },
+  "productVision": {
+    "statement": "Create a multi-tenant SaaS platform that enables tennis clubs to run tournaments and competitions end-to-end with confidence, clarity, and minimal admin effort",
+    "principles": [
+      "Handle all common competition formats",
+      "Simple enough for social comps, robust enough for serious tournaments",
+      "Work courtside on a phone",
+      "Support public viewing and optional player accounts",
+      "Extensible without rework"
+    ]
+  },
+  "successMetrics": {
+    "mvp": [
+      {
+        "metric": "Time to create and publish a tournament",
+        "target": "< 10 minutes"
+      },
+      {
+        "metric": "Score entry time per match",
+        "target": "< 30 seconds"
+      },
+      {
+        "metric": "Manual recalculation of standings/draws",
+        "target": "Zero"
+      },
+      {
+        "metric": "Pilot clubs complete full competition",
+        "target": "At least 1"
+      }
+    ]
+  },
+  "personas": [
+    {
+      "name": "Club Admin",
+      "description": "Sets up club, manages roles and permissions",
+      "needs": ["Auditability", "Control", "Multi-competition management"]
+    },
+    {
+      "name": "Tournament Organiser",
+      "description": "Creates competitions, divisions, fixtures",
+      "needs": ["Reliability", "Flexibility", "Handle late changes and disputes"]
+    },
+    {
+      "name": "Court Supervisor",
+      "description": "Enters scores courtside",
+      "needs": ["Fast mobile UI", "Works in weak connectivity", "Low friction"]
+    },
+    {
+      "name": "Player",
+      "description": "Views fixtures and results, optionally submits scores",
+      "needs": ["Easy access to fixtures/results", "Optional login", "Score submission if enabled"]
+    }
+  ],
+  "features": {
+    "multiTenantAndClubAdministration": {
+      "epic": "Epic 0 - SaaS Foundations",
+      "priority": "MVP",
+      "implementationNote": "This epic extends the existing authentication system. User accounts, login, and session management are already implemented. These features add club/tenant membership and role-based permissions on top of the existing user model.",
+      "stories": [
+        {
+          "id": "A1",
+          "title": "Create a club (tenant)",
+          "priority": "MVP",
+          "userStory": "As a platform admin, I can create a new club tenant with name, region, and branding basics",
+          "acceptanceCriteria": [
+            "Club has unique ID and isolated data namespace",
+            "Default roles exist (Admin, Organiser, Supervisor, Player)",
+            "Branding defaults applied (logo/color optional)"
+          ]
+        },
+        {
+          "id": "A2",
+          "title": "Invite users to a club",
+          "priority": "MVP",
+          "userStory": "As a club admin, I can invite users via email to join my club and assign a role",
+          "acceptanceCriteria": [
+            "Invite can be accepted/declined",
+            "Roles are per-club",
+            "A user can belong to multiple clubs",
+            "Leverages existing user accounts - invited users log in with existing credentials",
+            "New users go through the existing registration flow before accepting invite"
+          ]
+        },
+        {
+          "id": "A3",
+          "title": "Manage club members & roles",
+          "priority": "MVP",
+          "userStory": "As a club admin, I can view and change roles of members and deactivate access",
+          "acceptanceCriteria": [
+            "Role changes take effect immediately",
+            "Deactivated users lose club access but remain users globally",
+            "Changes are logged in an audit log"
+          ]
+        },
+        {
+          "id": "A4",
+          "title": "Configure club defaults",
+          "priority": "V1",
+          "userStory": "As a club admin, I can set default scoring rule presets, naming conventions, and optional ratings provider settings",
+          "acceptanceCriteria": [
+            "Defaults apply to newly created competitions",
+            "Existing competitions are unaffected unless explicitly updated"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "Two clubs can exist and cannot see each other's data",
+        "Same user can switch clubs",
+        "Existing authenticated users can be invited to clubs without re-registering",
+        "Club role permissions layer works alongside existing auth middleware"
+      ],
+      "outOfScopeForThisEpic": [
+        "User registration flow (already exists)",
+        "Login/logout (already exists)",
+        "Session management (already exists)",
+        "Password reset (already exists)"
+      ]
+    },
+    "competitionLifecycle": {
+      "epic": "Epic 1 - Competition Setup",
+      "priority": "MVP",
+      "stories": [
+        {
+          "id": "B1",
+          "title": "Create a competition/event",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can create a competition with name, type (tournament/league), format (KO/RR/etc.), dates (optional), and status (draft/published)",
+          "acceptanceCriteria": [
+            "Draft competitions are not visible to players/public",
+            "Published competitions are visible via link (read-only)"
+          ]
+        },
+        {
+          "id": "B2",
+          "title": "Configure divisions/grades",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can create one or more divisions (e.g., A grade, B grade), each with its own draw",
+          "acceptanceCriteria": [
+            "Each division can have its own format/scoring rules (optional override)",
+            "A player/team can only belong to one division per competition (unless explicitly enabled later)"
+          ]
+        },
+        {
+          "id": "B3",
+          "title": "Configure scoring rules",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can choose a scoring preset or define a custom scoring rule",
+          "acceptanceCriteria": [
+            "Custom rule can be saved to competition (and optionally as club preset)",
+            "Score entry UI validates against selected rule"
+          ],
+          "scoringPresets": [
+            "Best-of-3 with tiebreak",
+            "Match tiebreak",
+            "FAST4-style",
+            "Pro set",
+            "Custom (e.g., 1 set first to 8 games, tiebreak at 7-7)"
+          ]
+        },
+        {
+          "id": "B4",
+          "title": "Configure score-entry permissions",
+          "priority": "MVP",
+          "userStory": "As a club admin or organiser, I can set who can enter scores: organisers/supervisors only, or allow players with mutual confirmation",
+          "acceptanceCriteria": [
+            "If player scoring enabled: only match participants can submit/confirm",
+            "Match is not final until both participants approve (or admin overrides)",
+            "All actions are audit logged"
+          ]
+        },
+        {
+          "id": "B5",
+          "title": "Publish competition",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can publish a competition to generate a shareable public link",
+          "acceptanceCriteria": [
+            "Public link is read-only by default",
+            "Public link can be disabled/regenerated",
+            "Logged-in players see the same info plus their personal views"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "Organiser can create KO/RR competition with custom 'first to 8 games' ruleset"
+      ]
+    },
+    "playerAndTeamManagement": {
+      "epic": "Epic 2 - Player & Team Management",
+      "priority": "MVP",
+      "stories": [
+        {
+          "id": "C1",
+          "title": "Add players to a competition",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can add players by searching existing club player profiles or creating a new profile",
+          "acceptanceCriteria": [
+            "Player profiles can exist without a user login",
+            "Duplicate detection suggests possible matches (name/email)",
+            "A player can be reused across competitions"
+          ]
+        },
+        {
+          "id": "C2",
+          "title": "Edit player details",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can edit a player's details and assign them to a division",
+          "acceptanceCriteria": [
+            "Changes reflect immediately in the competition",
+            "Audit record created for key changes (division, name, identifier)"
+          ]
+        },
+        {
+          "id": "C3",
+          "title": "Create doubles teams",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can create a doubles team from two players and register it to a division",
+          "acceptanceCriteria": [
+            "Prevent the same player being in two teams in same division (unless explicitly allowed)",
+            "Teams have display names and can store seeding/rating metadata"
+          ]
+        },
+        {
+          "id": "C4",
+          "title": "Bulk import players",
+          "priority": "V1",
+          "userStory": "As an organiser, I can import players/teams from CSV",
+          "acceptanceCriteria": [
+            "CSV template provided",
+            "Preview + validation before commit",
+            "Import report shows created/updated/skipped entries"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "Organiser can build an entry list for singles or doubles"
+      ]
+    },
+    "fixtureGeneration": {
+      "epic": "Epic 3 - Fixture Generation Engine",
+      "priority": "MVP",
+      "enginePrinciples": [
+        "Determinism: Generation must be repeatable (same inputs + seed = same fixtures)",
+        "Immutability of history: Store each generation as a revision",
+        "Event-sourcing-friendly: Engine can run from state snapshot or domain events",
+        "Pluggable formats: Each format implements validate, generate, update progression",
+        "Scoring is declarative: Validation uses RuleSet, not scattered if/else"
+      ],
+      "stories": [
+        {
+          "id": "D1",
+          "title": "Generate knockout draw",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can generate a knockout draw from registered entries with optional seeding and byes",
+          "acceptanceCriteria": [
+            "Supports bracket sizes not equal to power-of-two (byes assigned)",
+            "Seed placement follows standard seeding distribution rules",
+            "Regenerating requires confirmation and logs the action"
+          ],
+          "algorithm": {
+            "steps": [
+              "Determine bracket size (power-of-two >= entries)",
+              "Compute number of byes = bracketSize - entryCount",
+              "Build initial slots with seeding placement if enabled",
+              "Fill remaining with unseeded (optionally shuffle with RNG)",
+              "Create round-1 matches in slot order",
+              "Create subsequent rounds as PENDING with WINNER_OF_MATCH source"
+            ]
+          }
+        },
+        {
+          "id": "D2",
+          "title": "Generate round robin fixtures",
+          "priority": "MVP",
+          "userStory": "As an organiser, I can generate round robin fixtures for a division as a single pool or multiple pools",
+          "acceptanceCriteria": [
+            "Fixtures cover all required matchups (each pair plays once, or configurable)",
+            "Pool size and number of pools can be set",
+            "Optional finals stage can be configured"
+          ],
+          "algorithm": {
+            "poolAssignment": [
+              "If distributeSeeds: sort by seed ascending, snake distribution across pools",
+              "Fill remaining entries with deterministic shuffle, distribute round-robin"
+            ],
+            "fixtureGeneration": [
+              "Use circle method to generate rounds for N participants per pool",
+              "If odd N: add ghost BYE participant, generate rounds, omit BYE matches"
+            ]
+          }
+        },
+        {
+          "id": "D3",
+          "title": "Generate Swiss pairings",
+          "priority": "V1",
+          "userStory": "As an organiser, I can generate Swiss rounds based on results and pairing rules",
+          "acceptanceCriteria": [
+            "Prevent repeated pairings where possible",
+            "Supports round count configuration",
+            "Pairing algorithm is deterministic and auditable"
+          ]
+        },
+        {
+          "id": "D4",
+          "title": "Generate ladder/box league rounds",
+          "priority": "V1",
+          "userStory": "As an organiser, I can generate scheduled rounds or enable challenge-based ladder rules",
+          "acceptanceCriteria": [
+            "Ladder rule set is configurable (movement logic, challenge windows)",
+            "Results update standings automatically"
+          ]
+        },
+        {
+          "id": "D5",
+          "title": "Generate compass draw",
+          "priority": "V1",
+          "userStory": "As an organiser, I can generate a compass draw structure (with directional brackets)",
+          "acceptanceCriteria": [
+            "Losers feed into the correct compass path",
+            "Standings/results reflect compass progression"
+          ]
+        },
+        {
+          "id": "D6",
+          "title": "Generate team competition fixtures",
+          "priority": "V1",
+          "userStory": "As an organiser, I can generate team-vs-team fixtures and define match rubbers",
+          "acceptanceCriteria": [
+            "Team tie has a collection of sub-matches",
+            "Scoring can roll-up to team result using configured rules"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "With 7 entries you can generate RR fixtures correctly",
+        "With 13 entries you can generate KO bracket with byes"
+      ]
+    },
+    "scoreEntryAndMatchState": {
+      "epic": "Epic 4 - Score Entry & Validation",
+      "priority": "MVP",
+      "stories": [
+        {
+          "id": "E1",
+          "title": "Enter match score (organiser/supervisor)",
+          "priority": "MVP",
+          "userStory": "As an organiser or supervisor, I can enter a score for a match and mark special outcomes",
+          "acceptanceCriteria": [
+            "Score is validated against scoring rule set",
+            "Match state transitions to Completed",
+            "Standings/draw updates immediately"
+          ],
+          "specialOutcomes": ["Walkover", "Retirement", "Default", "No-show", "Abandoned"]
+        },
+        {
+          "id": "E2",
+          "title": "Player score submission + mutual approval",
+          "priority": "MVP",
+          "userStory": "As a player, I can submit the score for a match I played, and my opponent can approve or dispute it",
+          "acceptanceCriteria": [
+            "Only participants can submit/approve",
+            "Both approvals required to finalise",
+            "Dispute blocks finalisation and alerts organisers (in-app)"
+          ]
+        },
+        {
+          "id": "E3",
+          "title": "Score corrections & overrides",
+          "priority": "MVP",
+          "userStory": "As an admin/organiser, I can correct a score after it's entered, with a reason",
+          "acceptanceCriteria": [
+            "Correction requires a reason note",
+            "Prior value retained in audit history",
+            "Downstream standings/draw recalculated correctly"
+          ]
+        },
+        {
+          "id": "E4",
+          "title": "Match status controls",
+          "priority": "V1",
+          "userStory": "As an organiser, I can mark match statuses: Scheduled, In Progress, Completed, Abandoned, Cancelled",
+          "acceptanceCriteria": [
+            "Status changes are tracked",
+            "Completed requires a valid score or special outcome"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "Supervisor can record a full day's results from a phone"
+      ]
+    },
+    "standingsAndProgression": {
+      "epic": "Epic 5 - Progression & Standings",
+      "priority": "MVP",
+      "stories": [
+        {
+          "id": "F1",
+          "title": "Round robin standings + tie-breakers",
+          "priority": "MVP",
+          "userStory": "As an organiser/player, I can view standings with configurable tie-breakers",
+          "acceptanceCriteria": [
+            "Tie-breaker order configurable per competition (wins, head-to-head, set %, game %)",
+            "Standings update after each completed match"
+          ],
+          "tieBreakers": ["WINS", "HEAD_TO_HEAD", "SETS_PERCENT", "GAMES_PERCENT", "POINTS"]
+        },
+        {
+          "id": "F2",
+          "title": "Knockout progression",
+          "priority": "MVP",
+          "userStory": "As an organiser/player, I can see winners advance automatically in the draw",
+          "acceptanceCriteria": [
+            "Completing a match places winner into next-round slot",
+            "Walkovers/retirements progress correctly"
+          ]
+        },
+        {
+          "id": "F3",
+          "title": "Finals stage after pools",
+          "priority": "V1",
+          "userStory": "As an organiser, I can generate a finals bracket from pool results (top N per pool)",
+          "acceptanceCriteria": [
+            "Selection rules configurable (top 2, top 4, best runners-up)",
+            "Seeding can be derived from pool ranking"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "Completing scores updates next round (KO) or rankings (RR) correctly"
+      ]
+    },
+    "playerExperience": {
+      "epic": "Epic 6 - Publishing & Views",
+      "priority": "MVP",
+      "stories": [
+        {
+          "id": "G1",
+          "title": "Public competition view",
+          "priority": "MVP",
+          "userStory": "As anyone with the link, I can view published fixtures, results, and standings",
+          "acceptanceCriteria": [
+            "Read-only access",
+            "No personal data leakage beyond what the club allows (e.g., initials option)"
+          ]
+        },
+        {
+          "id": "G2",
+          "title": "Player dashboard",
+          "priority": "MVP",
+          "userStory": "As a logged-in player, I can see 'My Matches' across all clubs and competitions",
+          "acceptanceCriteria": [
+            "Shows upcoming + pending confirmation + completed",
+            "Filters by club/competition"
+          ]
+        },
+        {
+          "id": "G3",
+          "title": "Player identity linking",
+          "priority": "V1",
+          "userStory": "As a club admin, I can link a user account to an existing player profile to avoid duplicates",
+          "acceptanceCriteria": [
+            "Merge flow has preview and conflict resolution",
+            "Links player profile to existing authenticated user account from the auth system",
+            "User can also self-claim a player profile if email matches"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "Public can follow along without logging in",
+        "Logged-in players get personalised match list"
+      ]
+    },
+    "playerScoring": {
+      "epic": "Epic 7 - Player Scoring (Optional Setting)",
+      "priority": "MVP",
+      "stories": [
+        {
+          "id": "PS1",
+          "title": "Player score submission",
+          "priority": "MVP",
+          "userStory": "As a player, I can submit my match score which creates a pending confirmation",
+          "acceptanceCriteria": [
+            "Only participants can submit",
+            "Creates 'pending confirmation' status"
+          ]
+        },
+        {
+          "id": "PS2",
+          "title": "Mutual approval & dispute",
+          "priority": "MVP",
+          "userStory": "As the opponent, I can confirm or dispute the submitted score",
+          "acceptanceCriteria": [
+            "Opponent can confirm or dispute",
+            "Organiser/admin can override",
+            "Dispute goes to organiser to resolve"
+          ]
+        }
+      ],
+      "exitCriteria": [
+        "Two players can submit/confirm score without organiser involvement",
+        "Dispute goes to organiser to resolve"
+      ]
+    },
+    "auditAndIntegrity": {
+      "epic": "Audit, Integrity, and Admin Tools",
+      "priority": "MVP",
+      "stories": [
+        {
+          "id": "H1",
+          "title": "Audit log",
+          "priority": "MVP",
+          "userStory": "As an admin, I can see a timeline of changes (fixtures generated, scores entered/edited, permission changes)",
+          "acceptanceCriteria": [
+            "Records who/when/what (entity + before/after for critical fields)",
+            "Filterable by competition/division/match"
+          ]
+        },
+        {
+          "id": "H2",
+          "title": "Data export",
+          "priority": "V1",
+          "userStory": "As an admin, I can export fixtures, results, standings as CSV",
+          "acceptanceCriteria": [
+            "Export includes IDs for re-import/debug",
+            "Works per division and whole competition"
+          ]
+        }
+      ]
+    }
+  },
+  "laterFeatures": {
+    "description": "Explicitly parked for post-V1",
+    "features": [
+      {
+        "id": "L1",
+        "title": "Ratings sync (UTR / Tennis Australia)",
+        "userStory": "As a club admin, I can connect a ratings provider and sync player ratings periodically",
+        "acceptanceCriteria": [
+          "Provider connection stored per club",
+          "Sync logs + conflict handling (manual override)",
+          "Ratings used in seeding suggestions"
+        ]
+      },
+      {
+        "id": "L2",
+        "title": "Bracket visual editor (drag/drop UI)",
+        "userStory": "As an organiser, I can visually adjust a bracket/pool via drag and drop with rule warnings",
+        "acceptanceCriteria": [
+          "Drag-drop updates underlying fixture model",
+          "Warnings for seeding violations / invalid states",
+          "Undo/redo and audit trail"
+        ]
+      }
+    ]
+  },
+  "outOfScope": {
+    "mvp": [
+      "Court allocation and time scheduling",
+      "Weather delays and rescheduling automation",
+      "Automated notifications (email/SMS)",
+      "Ratings sync (UTR / Tennis Australia)",
+      "Visual drag-and-drop bracket editor",
+      "Printable PDFs and advanced reporting",
+      "Offline-first score entry",
+      "Federation integration",
+      "White-label branding per club",
+      "Paid tiers and pricing model"
+    ],
+    "alreadyExists": [
+      "User registration and account creation",
+      "Login/logout flows",
+      "Session management and authentication tokens",
+      "Basic user model and database schema",
+      "Password reset functionality"
+    ],
+    "note": "Features marked 'alreadyExists' are provided by the existing auth system and should be leveraged, not rebuilt"
+  },
+  "nonFunctionalRequirements": {
+    "performance": [
+      "Fixture generation < 1 second for typical club sizes",
+      "Score submission < 500ms server response"
+    ],
+    "reliability": [
+      "No silent data loss",
+      "Deterministic recalculation of state"
+    ],
+    "security": [
+      "Strict tenant isolation",
+      "Role-based permissions",
+      "No cross-club data access"
+    ],
+    "usability": [
+      "Mobile-first score entry",
+      "Minimal steps for common actions",
+      "Sensible defaults"
+    ],
+    "auditability": [
+      "All critical mutations logged",
+      "Previous values preserved"
+    ]
+  },
+  "technicalArchitecture": {
+    "assumptions": [
+      "Backend implemented in TypeScript",
+      "Existing authentication system provides: user registration, login, session management, and user model",
+      "Club/tenant features extend (not replace) the existing auth - add membership and roles layer",
+      "Deterministic fixture/scoring engine",
+      "Revision-based fixture model",
+      "Player profiles decoupled from user accounts (profiles can exist without login, linked later)",
+      "Event-driven recalculation of standings",
+      "Existing auth middleware should be reused for route protection"
+    ],
+    "coreTypes": {
+      "identifiers": ["TenantId", "ClubId", "CompetitionId", "DivisionId", "EntryId", "PlayerId", "TeamId", "MatchId", "FixtureRevisionId", "StandingRevisionId"],
+      "entryTypes": ["SINGLES", "DOUBLES", "TEAM_COMP"],
+      "formatKeys": ["KNOCKOUT", "ROUND_ROBIN", "SWISS", "LADDER", "COMPASS", "TEAM_COMP"],
+      "matchStatuses": ["PENDING", "READY", "IN_PROGRESS", "COMPLETED", "CANCELLED"],
+      "matchOutcomeTypes": ["NORMAL", "WALKOVER", "RETIREMENT", "DEFAULT", "NO_SHOW", "ABANDONED"],
+      "scoreSubmissionStatuses": ["DRAFT", "SUBMITTED", "CONFIRMED", "DISPUTED", "OVERRIDDEN"]
+    },
+    "pluginContract": {
+      "description": "Each format plugin must implement these methods",
+      "methods": [
+        "validateConfig(config, entries): ValidationIssue[]",
+        "generateFixtures(envelope, context): GenerateResult",
+        "computeStandings(envelope, context): StandingsResult (optional)",
+        "applyMatchResult(envelope, fixtureState, match, winnerId): FixtureState (optional)"
+      ]
+    },
+    "scoringRuleSet": {
+      "match": {
+        "bestOfSets": "1 | 3 | 5 (typical)",
+        "fixedSets": "number (for pro set format)"
+      },
+      "set": {
+        "gamesToWin": "number (e.g., 6, 4, 8)",
+        "winBy": "1 | 2",
+        "tiebreakAt": "number (e.g., 6 means 6-6 triggers TB)",
+        "capAt": "number (optional, e.g., 9 for first to 9 no-adv)"
+      },
+      "tiebreak": {
+        "pointsToWin": "number (7 or 10)",
+        "winBy": "1 | 2",
+        "replacesFinalSet": "boolean"
+      }
+    },
+    "domainEvents": [
+      "FIXTURES_GENERATED",
+      "SCORE_SUBMITTED",
+      "SCORE_CONFIRMED",
+      "SCORE_OVERRIDDEN",
+      "MATCH_UPDATED"
+    ]
+  },
+  "mvpReleaseCriteria": [
+    "A club can run a full KO or RR tournament",
+    "Scores can be entered and corrected",
+    "Standings/draw update correctly",
+    "Public link works reliably",
+    "Admin override and audit log function"
+  ],
+  "mvpUserJourneys": {
+    "knockoutTournament": [
+      "Organiser creates competition and division",
+      "Adds players or doubles teams",
+      "Selects or customises scoring rules",
+      "Generates knockout draw",
+      "Publishes competition",
+      "Supervisors enter scores as matches finish",
+      "Winners advance automatically",
+      "Players follow progress via public link"
+    ],
+    "roundRobinCompetition": [
+      "Organiser creates competition and division",
+      "Adds entries",
+      "Configures pool(s)",
+      "Generates round robin fixtures",
+      "Scores entered progressively",
+      "Standings update automatically using tie-breakers",
+      "Results shared publicly"
+    ]
+  },
+  "uxRequirements": {
+    "organiser": {
+      "platform": "Desktop/Mobile",
+      "requirements": [
+        "Create competition wizard is short with sensible defaults",
+        "Fixtures generation is 1 click with clear preview + regenerate warning",
+        "Clear list: 'Matches needing scores'",
+        "Can correct a score with a reason"
+      ]
+    },
+    "supervisor": {
+      "platform": "Mobile-first",
+      "requirements": [
+        "Landing page shows today's/all matches for the division",
+        "Tap a match to enter set scores fast (minimal taps)",
+        "Supports walkover/retirement/default",
+        "UI must work in weak reception (simple pages, small payloads)"
+      ]
+    },
+    "player": {
+      "platform": "Mobile/Desktop",
+      "requirements": [
+        "Public link shows fixtures (by round/pool), results, standings",
+        "Logged-in view adds 'My matches'",
+        "If player scoring enabled: submit + confirm flows"
+      ]
+    }
+  },
+  "roadmap": {
+    "mvp": {
+      "description": "First sellable workflow - KO/RR end-to-end",
+      "features": [
+        "Multi-tenant club + roles (A1-A3)",
+        "Create competition/division + scoring + publish link (B1-B5)",
+        "Add players/teams (C1-C3)",
+        "Generate KO + RR fixtures (D1-D2)",
+        "Enter scores + corrections + player mutual approval option (E1-E3)",
+        "Standings and progression (F1-F2)",
+        "Public view + player dashboard (G1-G2)",
+        "Audit log (H1)"
+      ]
+    },
+    "v1PostMvp": {
+      "description": "Valuable but not needed for first club success",
+      "features": [
+        "CSV import/export",
+        "Finals stage after pools (top N to KO)",
+        "Swiss format",
+        "Ladder format",
+        "Compass draw format",
+        "Team competitions",
+        "Better reporting and printable PDFs"
+      ]
+    },
+    "later": {
+      "description": "Nice-to-haves for future phases",
+      "features": [
+        "Ratings sync (UTR / Tennis Australia)",
+        "Visual drag-and-drop bracket editor",
+        "Notifications (email/SMS)",
+        "Scheduling & court allocation"
+      ]
+    }
+  },
+  "milestones": {
+    "recommended": [
+      {
+        "milestone": 1,
+        "description": "Demo-to-clubs early",
+        "scope": "Multi-tenant + create comp + add players + KO fixtures + score entry + public link"
+      },
+      {
+        "milestone": 2,
+        "description": "Add RR support",
+        "scope": "RR fixtures + standings"
+      },
+      {
+        "milestone": 3,
+        "description": "Player experience",
+        "scope": "Logged-in player dashboard"
+      },
+      {
+        "milestone": 4,
+        "description": "Player scoring",
+        "scope": "Player mutual approval scoring"
+      }
+    ]
+  }
+}
