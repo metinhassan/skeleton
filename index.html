@@ -64,27 +64,46 @@
       <!-- Registration View -->
       <div id="register-view" class="view" hidden></div>
 
-      <!-- Dashboard View (shown after login) -->
-      <div id="dashboard-view" class="view" hidden>
-        <header class="dashboard-header">
-          <h1>Dashboard</h1>
-          <div class="user-info">
-            <span id="user-name"></span>
-            <button id="edit-profile-btn" class="btn btn-outline">Edit Profile</button>
-            <button id="logout-btn" class="btn btn-secondary">Logout</button>
-          </div>
-        </header>
+      <!-- App Shell Container (main authenticated layout) -->
+      <div id="app-shell-container" class="view" hidden></div>
 
-        <main class="dashboard-content">
-          <div class="welcome-card">
-            <h2>Welcome to Skeleton App</h2>
-            <p>You are now logged in. This is your starting point for building amazing applications.</p>
-          </div>
-        </main>
-      </div>
+      <!-- Dashboard Content (injected into app shell) -->
+      <template id="dashboard-content">
+        <div class="welcome-card">
+          <h2 id="user-name">Welcome</h2>
+          <p>You are now logged in. This is your starting point for building amazing applications.</p>
+          <button id="edit-profile-btn" class="btn btn-outline" style="margin-top: 1rem;">Edit Profile</button>
+        </div>
+        <div class="welcome-card" style="margin-top: 1rem;">
+          <h2>Live Scoring (Demo)</h2>
+          <p>Access live scoring and spectator views using these routes:</p>
+          <ul style="margin: 1rem 0; padding-left: 1.5rem; color: var(--color-text-muted);">
+            <li><code>#/clubs/{clubId}/matches/{matchId}/score</code> - Organiser scoring (auth required)</li>
+            <li><code>#/live/{competition-slug}</code> - Public live scores</li>
+            <li><code>#/live/match/{matchId}</code> - Public match detail</li>
+            <li><code>#/competitions/{slug}/bracket</code> - Bracket/standings view</li>
+          </ul>
+          <div class="demo-links" id="demo-links"></div>
+        </div>
+      </template>
+
+      <!-- Legacy Dashboard View (kept for backward compatibility during transition) -->
+      <div id="dashboard-view" class="view" hidden></div>
 
       <!-- Profile Edit View -->
       <div id="profile-view" class="view" hidden></div>
+
+      <!-- Live Scoring View (for match organisers) -->
+      <div id="live-scoring-view" class="view" hidden></div>
+
+      <!-- Public Live Scores View (no auth required) -->
+      <div id="public-live-view" class="view" hidden></div>
+
+      <!-- Public Match View (no auth required) -->
+      <div id="public-match-view" class="view" hidden></div>
+
+      <!-- Bracket View (no auth required) -->
+      <div id="bracket-view" class="view" hidden></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

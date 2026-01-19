@@ -5,6 +5,21 @@
 
 import { RegistrationForm } from './components/registration.js';
 import { ProfileEdit } from './components/profile-edit.js';
+import { LiveScoring } from './components/live-scoring.js';
+import { PublicLiveScores } from './components/public-live-scores.js';
+import { PublicMatchView } from './components/public-match-view.js';
+import { BracketView } from './components/bracket-view.js';
+import { AppShell } from './components/app-shell.js';
+import type { NavSection } from './components/side-nav.js';
+import { clubContext } from './lib/club-context.js';
+import { CompetitionList } from './components/competition-list.js';
+import { CompetitionForm } from './components/competition-form.js';
+import { CompetitionDetail } from './components/competition-detail.js';
+import { PlayerList } from './components/player-list.js';
+import { PlayerForm } from './components/player-form.js';
+import { TeamForm } from './components/team-form.js';
+import type { Player, Team } from './types/player.js';
+import { toast } from './components/toast.js';
 
 interface User {
   id: string;
@@ -24,17 +39,34 @@ interface LoginResponse {
   error?: string;
 }
 
-type ViewName = 'login' | 'register' | 'dashboard' | 'profile';
+type ViewName = 'login' | 'register' | 'dashboard' | 'profile' | 'live-scoring' | 'public-live' | 'public-match' | 'bracket' | 'app-shell';
+
+// Route parameter interface
+interface RouteParams {
+  clubId?: string;
+  matchId?: string;
+  slug?: string;
+}
 
 class App {
   private user: User | null = null;
-  private currentView: ViewName = 'login';
+  public currentView: ViewName = 'login';
+  private currentSection: NavSection = 'dashboard';
 
   // Views
   private loginView: HTMLElement;
   private registerView: HTMLElement;
   private dashboardView: HTMLElement;
   private profileView: HTMLElement;
+  private liveScoringView: HTMLElement;
+  private publicLiveView: HTMLElement;
+  private publicMatchView: HTMLElement;
+  private bracketView: HTMLElement;
+  private appShellContainer: HTMLElement;
+
+  // App Shell
+  private appShell: AppShell | null = null;
+  private dashboardContentTemplate: HTMLTemplateElement;
 
   // Login form elements
   private loginForm: HTMLFormElement;
@@ -43,10 +75,21 @@ class App {
   private loginBtn: HTMLButtonElement;
   private errorMessage: HTMLElement;
 
-  // Dashboard elements
-  private logoutBtn: HTMLButtonElement;
-  private editProfileBtn: HTMLButtonElement;
-  private userNameDisplay: HTMLElement;
+  // User name display (dynamically found in app shell content)
+  private userNameDisplay: HTMLElement | null = null;
+  private editProfileBtn: HTMLElement | null = null;
+
+  // Active component instances (for cleanup)
+  private activeLiveScoring: LiveScoring | null = null;
+  private activePublicLive: PublicLiveScores | null = null;
+  private activePublicMatch: PublicMatchView | null = null;
+  private activeBracket: BracketView | null = null;
+  private activeCompetitionList: CompetitionList | null = null;
+  private activeCompetitionDetail: CompetitionDetail | null = null;
+  private activeCompetitionForm: CompetitionForm | null = null;
+  private activePlayerList: PlayerList | null = null;
+  private activePlayerForm: PlayerForm | null = null;
+  private activeTeamForm: TeamForm | null = null;
 
   constructor() {
     // Get view elements
@@ -54,6 +97,14 @@ class App {
     this.registerView = this.getElement('#register-view');
     this.dashboardView = this.getElement('#dashboard-view');
     this.profileView = this.getElement('#profile-view');
+    this.liveScoringView = this.getElement('#live-scoring-view');
+    this.publicLiveView = this.getElement('#public-live-view');
+    this.publicMatchView = this.getElement('#public-match-view');
+    this.bracketView = this.getElement('#bracket-view');
+    this.appShellContainer = this.getElement('#app-shell-container');
+
+    // Get dashboard content template
+    this.dashboardContentTemplate = this.getElement('#dashboard-content') as HTMLTemplateElement;
 
     // Get login form elements
     this.loginForm = this.getElement('#login-form') as HTMLFormElement;
@@ -62,13 +113,9 @@ class App {
     this.loginBtn = this.getElement('#login-btn') as HTMLButtonElement;
     this.errorMessage = this.getElement('#error-message');
 
-    // Get dashboard elements
-    this.logoutBtn = this.getElement('#logout-btn') as HTMLButtonElement;
-    this.editProfileBtn = this.getElement('#edit-profile-btn') as HTMLButtonElement;
-    this.userNameDisplay = this.getElement('#user-name');
-
     this.bindEvents();
-    this.checkAuth();
+    this.setupRouting();
+    this.handleInitialRoute();
   }
 
   private getElement(selector: string): HTMLElement {
@@ -93,10 +140,108 @@ class App {
         this.showRegister();
       });
     }
+  }
 
-    // Dashboard events
-    this.logoutBtn.addEventListener('click', () => this.handleLogout());
-    this.editProfileBtn.addEventListener('click', () => this.showProfile());
+  /**
+   * Setup hash-based routing
+   */
+  private setupRouting(): void {
+    window.addEventListener('hashchange', () => this.handleRoute());
+  }
+
+  /**
+   * Handle the initial route on page load
+   */
+  private async handleInitialRoute(): Promise<void> {
+    const hash = window.location.hash.slice(1);
+
+    // Check if this is a public route (no auth required)
+    if (this.isPublicRoute(hash)) {
+      this.handleRoute();
+      return;
+    }
+
+    // For protected routes, check auth first
+    await this.checkAuth();
+
+    // After auth check, handle the route if authenticated
+    if (this.user && hash) {
+      this.handleRoute();
+    }
+  }
+
+  /**
+   * Check if a route is public (no auth required)
+   */
+  private isPublicRoute(hash: string): boolean {
+    return hash.startsWith('/live/') || hash.startsWith('/competitions/');
+  }
+
+  /**
+   * Handle route changes
+   */
+  private handleRoute(): void {
+    const hash = window.location.hash.slice(1);
+
+    // Parse route and extract parameters
+    const params = this.parseRoute(hash);
+
+    if (!params) {
+      // No special route, show default view based on auth
+      if (this.user) {
+        this.showDashboard();
+      }
+      return;
+    }
+
+    // Route to appropriate view
+    if (params.route === 'live-scoring' && params.clubId && params.matchId) {
+      this.showLiveScoring(params.clubId, params.matchId);
+    } else if (params.route === 'public-live' && params.slug) {
+      this.showPublicLive(params.slug);
+    } else if (params.route === 'public-match' && params.matchId) {
+      this.showPublicMatch(params.matchId);
+    } else if (params.route === 'bracket' && params.slug) {
+      this.showBracket(params.slug);
+    }
+  }
+
+  /**
+   * Parse route and extract parameters
+   */
+  private parseRoute(hash: string): { route: string } & RouteParams | null {
+    // Match: /clubs/:clubId/matches/:matchId/score
+    const scoringMatch = hash.match(/^\/clubs\/([^/]+)\/matches\/([^/]+)\/score$/);
+    if (scoringMatch) {
+      return { route: 'live-scoring', clubId: scoringMatch[1], matchId: scoringMatch[2] };
+    }
+
+    // Match: /live/:slug
+    const publicLiveMatch = hash.match(/^\/live\/([^/]+)$/);
+    if (publicLiveMatch) {
+      return { route: 'public-live', slug: publicLiveMatch[1] };
+    }
+
+    // Match: /live/match/:matchId
+    const publicMatchMatch = hash.match(/^\/live\/match\/([^/]+)$/);
+    if (publicMatchMatch) {
+      return { route: 'public-match', matchId: publicMatchMatch[1] };
+    }
+
+    // Match: /competitions/:slug/bracket
+    const bracketMatch = hash.match(/^\/competitions\/([^/]+)\/bracket$/);
+    if (bracketMatch) {
+      return { route: 'bracket', slug: bracketMatch[1] };
+    }
+
+    return null;
+  }
+
+  /**
+   * Navigate to a route
+   */
+  public navigate(path: string): void {
+    window.location.hash = path;
   }
 
   /**
@@ -179,7 +324,18 @@ class App {
         credentials: 'include',
       });
 
+      // Clean up app shell
+      if (this.appShell) {
+        this.appShell.destroy();
+        this.appShell = null;
+      }
+
+      // Clear club context
+      clubContext.clear();
+
       this.user = null;
+      this.userNameDisplay = null;
+      this.editProfileBtn = null;
       this.showLogin();
     } catch (error) {
       console.error('Logout failed:', error);
@@ -187,15 +343,83 @@ class App {
   }
 
   /**
+   * Cleanup active components before switching views
+   */
+  private cleanupActiveComponents(): void {
+    if (this.activeLiveScoring) {
+      this.activeLiveScoring.destroy();
+      this.activeLiveScoring = null;
+    }
+    if (this.activePublicLive) {
+      this.activePublicLive.destroy();
+      this.activePublicLive = null;
+    }
+    if (this.activePublicMatch) {
+      this.activePublicMatch.destroy();
+      this.activePublicMatch = null;
+    }
+    if (this.activeBracket) {
+      this.activeBracket.destroy();
+      this.activeBracket = null;
+    }
+    this.cleanupCompetitionComponents();
+    this.cleanupPlayerComponents();
+  }
+
+  /**
+   * Cleanup competition-related components (for switching within app shell)
+   */
+  private cleanupCompetitionComponents(): void {
+    if (this.activeCompetitionList) {
+      this.activeCompetitionList.destroy();
+      this.activeCompetitionList = null;
+    }
+    if (this.activeCompetitionDetail) {
+      this.activeCompetitionDetail.destroy();
+      this.activeCompetitionDetail = null;
+    }
+    if (this.activeCompetitionForm) {
+      this.activeCompetitionForm.destroy();
+      this.activeCompetitionForm = null;
+    }
+  }
+
+  /**
+   * Cleanup player-related components (for switching within app shell)
+   */
+  private cleanupPlayerComponents(): void {
+    if (this.activePlayerList) {
+      this.activePlayerList.destroy();
+      this.activePlayerList = null;
+    }
+    if (this.activePlayerForm) {
+      this.activePlayerForm.destroy();
+      this.activePlayerForm = null;
+    }
+    if (this.activeTeamForm) {
+      this.activeTeamForm.destroy();
+      this.activeTeamForm = null;
+    }
+  }
+
+  /**
    * Show a specific view, hiding all others
    */
   private showView(view: ViewName): void {
+    // Cleanup previous components
+    this.cleanupActiveComponents();
+
     this.currentView = view;
 
     this.loginView.hidden = view !== 'login';
     this.registerView.hidden = view !== 'register';
     this.dashboardView.hidden = view !== 'dashboard';
     this.profileView.hidden = view !== 'profile';
+    this.liveScoringView.hidden = view !== 'live-scoring';
+    this.publicLiveView.hidden = view !== 'public-live';
+    this.publicMatchView.hidden = view !== 'public-match';
+    this.bracketView.hidden = view !== 'bracket';
+    this.appShellContainer.hidden = view !== 'app-shell';
   }
 
   private showLogin(): void {
@@ -220,12 +444,349 @@ class App {
     });
   }
 
-  private showDashboard(): void {
-    if (this.user) {
+  private async showDashboard(): Promise<void> {
+    if (!this.user) return;
+
+    // Initialize app shell if not already initialized
+    if (!this.appShell) {
+      await this.initAppShell();
+    }
+
+    this.showView('app-shell');
+    this.handleNavigation('dashboard');
+  }
+
+  /**
+   * Initialize the App Shell with club context
+   */
+  private async initAppShell(): Promise<void> {
+    // Initialize club context
+    await clubContext.initialize();
+
+    // Create App Shell
+    this.appShell = new AppShell({
+      container: this.appShellContainer,
+      initialSection: this.currentSection,
+      onNavigate: (section) => {
+        this.handleNavigation(section);
+      },
+      onClubChange: (club) => {
+        console.log('Club changed:', club.name);
+      },
+      onLogout: () => {
+        this.handleLogout();
+      },
+    });
+
+    // Load initial dashboard content
+    this.loadDashboardContent();
+  }
+
+  /**
+   * Load dashboard content into the app shell
+   */
+  private loadDashboardContent(): void {
+    const contentContainer = this.appShell?.getContentContainer();
+    if (!contentContainer) return;
+
+    // Clone template content
+    const content = this.dashboardContentTemplate.content.cloneNode(true) as DocumentFragment;
+    contentContainer.innerHTML = '';
+    contentContainer.appendChild(content);
+
+    // Update user name display
+    this.userNameDisplay = contentContainer.querySelector('#user-name');
+    if (this.userNameDisplay && this.user) {
       const displayName = this.user.name || this.user.email;
       this.userNameDisplay.textContent = `Welcome, ${displayName}`;
     }
-    this.showView('dashboard');
+
+    // Bind edit profile button
+    this.editProfileBtn = contentContainer.querySelector('#edit-profile-btn');
+    if (this.editProfileBtn) {
+      this.editProfileBtn.addEventListener('click', () => this.showProfile());
+    }
+  }
+
+  /**
+   * Handle navigation between sections
+   */
+  private handleNavigation(section: NavSection): void {
+    this.currentSection = section;
+
+    // Cleanup components when switching sections
+    this.cleanupCompetitionComponents();
+    this.cleanupPlayerComponents();
+
+    // Update content based on section
+    const contentContainer = this.appShell?.getContentContainer();
+    if (!contentContainer) return;
+
+    switch (section) {
+      case 'dashboard':
+        this.loadDashboardContent();
+        break;
+      case 'competitions':
+        this.showCompetitionList();
+        break;
+      case 'players':
+        this.showPlayerList();
+        break;
+      case 'clubs':
+        contentContainer.innerHTML = `
+          <div class="welcome-card">
+            <h2>My Clubs</h2>
+            <p>Club settings coming soon...</p>
+          </div>
+        `;
+        break;
+    }
+  }
+
+  /**
+   * Show competition list
+   */
+  private showCompetitionList(): void {
+    const contentContainer = this.appShell?.getContentContainer();
+    if (!contentContainer) return;
+
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) {
+      contentContainer.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state__icon">🏢</div>
+          <h3 class="empty-state__title">No club selected</h3>
+          <p class="empty-state__description">
+            Please select a club to view competitions.
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    contentContainer.innerHTML = '';
+    this.activeCompetitionList = new CompetitionList({
+      container: contentContainer,
+      clubId: currentClub.id,
+      onCreateClick: () => this.showCreateCompetition(),
+      onCompetitionClick: (competition) => this.showCompetitionDetail(competition.id),
+    });
+  }
+
+  /**
+   * Show create competition form
+   */
+  private showCreateCompetition(): void {
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    this.activeCompetitionForm = new CompetitionForm({
+      mode: 'create',
+      clubId: currentClub.id,
+      onSuccess: (competition) => {
+        this.activeCompetitionForm = null;
+        this.showCompetitionDetail(competition.id);
+      },
+      onCancel: () => {
+        this.activeCompetitionForm = null;
+      },
+    });
+  }
+
+  /**
+   * Show competition detail
+   */
+  private showCompetitionDetail(competitionId: string): void {
+    const contentContainer = this.appShell?.getContentContainer();
+    if (!contentContainer) return;
+
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    // Cleanup list if showing detail
+    if (this.activeCompetitionList) {
+      this.activeCompetitionList.destroy();
+      this.activeCompetitionList = null;
+    }
+
+    contentContainer.innerHTML = '';
+    this.activeCompetitionDetail = new CompetitionDetail({
+      container: contentContainer,
+      competitionId,
+      clubId: currentClub.id,
+      onBack: () => {
+        this.cleanupCompetitionComponents();
+        this.showCompetitionList();
+      },
+      onNavigateToPublic: (slug) => {
+        this.navigate(`/competitions/${slug}/bracket`);
+      },
+    });
+  }
+
+  /**
+   * Show player list
+   */
+  private showPlayerList(): void {
+    const contentContainer = this.appShell?.getContentContainer();
+    if (!contentContainer) return;
+
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) {
+      contentContainer.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state__icon">🏢</div>
+          <h3 class="empty-state__title">No club selected</h3>
+          <p class="empty-state__description">
+            Please select a club to view players.
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    contentContainer.innerHTML = '';
+    this.activePlayerList = new PlayerList({
+      container: contentContainer,
+      clubId: currentClub.id,
+      onCreatePlayer: () => this.showCreatePlayer(),
+      onEditPlayer: (player) => this.showEditPlayer(player),
+      onDeletePlayer: (player) => this.handleDeletePlayer(player),
+      onCreateTeam: () => this.showCreateTeam(),
+      onEditTeam: (team) => this.handleEditTeam(team),
+      onDeleteTeam: (team) => this.handleDeleteTeam(team),
+    });
+  }
+
+  /**
+   * Show create player form
+   */
+  private showCreatePlayer(): void {
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    this.activePlayerForm = new PlayerForm({
+      mode: 'create',
+      clubId: currentClub.id,
+      onSuccess: (_player, addAnother) => {
+        if (!addAnother) {
+          this.activePlayerForm = null;
+        }
+        this.activePlayerList?.refresh();
+      },
+      onCancel: () => {
+        this.activePlayerForm = null;
+      },
+    });
+  }
+
+  /**
+   * Show edit player form
+   */
+  private showEditPlayer(player: Player): void {
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    this.activePlayerForm = new PlayerForm({
+      mode: 'edit',
+      clubId: currentClub.id,
+      player,
+      onSuccess: () => {
+        this.activePlayerForm = null;
+        this.activePlayerList?.refresh();
+      },
+      onCancel: () => {
+        this.activePlayerForm = null;
+      },
+    });
+  }
+
+  /**
+   * Handle delete player
+   */
+  private async handleDeletePlayer(player: Player): Promise<void> {
+    const confirmed = confirm(`Are you sure you want to delete "${player.name}"? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    try {
+      const response = await fetch(`/api/clubs/${currentClub.id}/players/${player.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to delete player');
+      }
+
+      toast.success('Player deleted successfully');
+      this.activePlayerList?.refresh();
+    } catch (error) {
+      console.error('Failed to delete player:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to delete player');
+    }
+  }
+
+  /**
+   * Show create team form
+   */
+  private showCreateTeam(): void {
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    const players = this.activePlayerList?.getPlayers() || [];
+
+    this.activeTeamForm = new TeamForm({
+      clubId: currentClub.id,
+      players,
+      onSuccess: () => {
+        this.activeTeamForm = null;
+        this.activePlayerList?.refresh();
+      },
+      onCancel: () => {
+        this.activeTeamForm = null;
+      },
+    });
+  }
+
+  /**
+   * Handle edit team (placeholder - could open a form)
+   */
+  private handleEditTeam(team: Team): void {
+    // For now, just show a message. Could implement TeamForm in edit mode.
+    toast.info(`Edit team "${team.name}" - Coming soon`);
+  }
+
+  /**
+   * Handle delete team
+   */
+  private async handleDeleteTeam(team: Team): Promise<void> {
+    const confirmed = confirm(`Are you sure you want to delete team "${team.name}"? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    try {
+      const response = await fetch(`/api/clubs/${currentClub.id}/teams/${team.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to delete team');
+      }
+
+      toast.success('Team deleted successfully');
+      this.activePlayerList?.refresh();
+    } catch (error) {
+      console.error('Failed to delete team:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to delete team');
+    }
   }
 
   private showProfile(): void {
@@ -246,7 +807,9 @@ class App {
           ...this.user!,
           ...updatedUser,
         };
-        this.userNameDisplay.textContent = `Welcome, ${updatedUser.name}`;
+        if (this.userNameDisplay) {
+          this.userNameDisplay.textContent = `Welcome, ${updatedUser.name}`;
+        }
       },
       onClose: () => {
         this.showDashboard();
@@ -272,6 +835,71 @@ class App {
 
   private hideError(): void {
     this.errorMessage.hidden = true;
+  }
+
+  /**
+   * Show live scoring view (requires auth)
+   */
+  private showLiveScoring(clubId: string, matchId: string): void {
+    if (!this.user) {
+      // Store intended destination and show login
+      this.showLogin();
+      return;
+    }
+
+    this.showView('live-scoring');
+
+    this.activeLiveScoring = new LiveScoring({
+      container: this.liveScoringView,
+      clubId,
+      matchId,
+      onClose: () => {
+        window.location.hash = '';
+        this.showDashboard();
+      },
+    });
+  }
+
+  /**
+   * Show public live scores view (no auth required)
+   */
+  private showPublicLive(slug: string): void {
+    this.showView('public-live');
+
+    this.activePublicLive = new PublicLiveScores({
+      container: this.publicLiveView,
+      competitionSlug: slug,
+      onMatchClick: (matchId) => {
+        this.navigate(`/live/match/${matchId}`);
+      },
+    });
+  }
+
+  /**
+   * Show public match view (no auth required)
+   */
+  private showPublicMatch(matchId: string): void {
+    this.showView('public-match');
+
+    this.activePublicMatch = new PublicMatchView({
+      container: this.publicMatchView,
+      matchId,
+      onBack: () => {
+        window.history.back();
+      },
+    });
+  }
+
+  /**
+   * Show bracket view (no auth required)
+   */
+  private showBracket(slug: string): void {
+    this.showView('bracket');
+
+    this.activeBracket = new BracketView({
+      container: this.bracketView,
+      competitionSlug: slug,
+    });
   }
 }
 

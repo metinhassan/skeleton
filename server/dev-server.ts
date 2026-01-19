@@ -15,9 +15,11 @@ import cookieParser from 'cookie-parser';
 import { createMockProvider, type MockAuthConfig } from '../src/authlib/packages/auth-mock/dist/provider.js';
 import { generateMockAccessToken } from '../src/authlib/packages/auth-mock/dist/tokens.js';
 import { serializeCookie, getCookieValue, COOKIE_NAMES, createSessionCookie } from '../src/authlib/packages/auth-core/dist/cookies.js';
-import { getUserService, getClubService, getCompetitionService } from './services/index.js';
+import { getUserService, getClubService, getCompetitionService, getPlayerService, getDrawService, getLiveScoreService, getLiveEventsService } from './services/index.js';
 import type { ClubRole } from './services/club-service.js';
 import type { CompetitionFormat, CompetitionType, ScoreEntryMode } from './services/competition-service.js';
+import type { EntryType, SelfRegisterInput, CreatePartnerRequestInput } from './services/player-service.js';
+import type { DrawType, RecordResultInput, UpdateMatchInput } from './services/draw-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -40,7 +42,7 @@ const MOCK_USERS = [
   {
     sub: 'user-002',
     email: 'demo@example.com',
-    password: 'demo123',
+    password: 'demo1234',
     email_verified: true,
     name: 'Demo User',
     groups: ['users'],
@@ -829,7 +831,15 @@ app.post('/api/invites/:inviteId/accept', requireAuth as any, async (req: Authen
       return;
     }
 
-    if (invite.email.toLowerCase() !== req.user!.email.toLowerCase()) {
+    // Look up user's email from database (token email may be empty)
+    const userService = getUserService();
+    const user = await userService.findById(req.user!.id);
+    if (!user) {
+      res.status(401).json({ error: 'User not found' });
+      return;
+    }
+
+    if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
       res.status(403).json({ error: 'This invite is not for you' });
       return;
     }
@@ -1236,6 +1246,968 @@ app.post('/api/clubs/:clubId/scoring-rules', requireAuth as any, requireClubOrga
   }
 });
 
+// ==================== Player API Endpoints ====================
+
+// Extend to include division context
+interface DivisionRequest extends ClubRequest {
+  divisionId?: string;
+}
+
+/**
+ * Middleware: Require division organiser access
+ * Must be used after requireAuth
+ * Expects :divisionId in route params
+ */
+async function requireDivisionOrganiser(req: DivisionRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const divisionId = req.params.divisionId;
+    if (!divisionId) {
+      res.status(400).json({ error: 'Division ID required' });
+      return;
+    }
+
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Get division to find competition
+    const competitionService = getCompetitionService();
+    const division = await competitionService.getDivision(divisionId);
+
+    if (!division) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    // Get competition to find club
+    const competition = await competitionService.getCompetition(division.competitionId);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    // Check club organiser access
+    const clubService = getClubService();
+    const membership = await clubService.getMembership(competition.clubId, req.user.id);
+
+    if (!membership || membership.status !== 'active') {
+      res.status(403).json({ error: 'Not a member of this club' });
+      return;
+    }
+
+    if (membership.role !== 'admin' && membership.role !== 'organiser') {
+      res.status(403).json({ error: 'Organiser access required' });
+      return;
+    }
+
+    req.divisionId = divisionId;
+    req.clubId = competition.clubId;
+    req.membership = { role: membership.role };
+    next();
+  } catch (error) {
+    console.error('Division access check error:', error);
+    res.status(500).json({ error: 'Failed to verify division access' });
+  }
+}
+
+/**
+ * Middleware: Require division member access
+ * Must be used after requireAuth
+ * Expects :divisionId in route params
+ */
+async function requireDivisionAccess(req: DivisionRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const divisionId = req.params.divisionId;
+    if (!divisionId) {
+      res.status(400).json({ error: 'Division ID required' });
+      return;
+    }
+
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Get division to find competition
+    const competitionService = getCompetitionService();
+    const division = await competitionService.getDivision(divisionId);
+
+    if (!division) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    // Get competition to find club
+    const competition = await competitionService.getCompetition(division.competitionId);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    // Check club member access
+    const clubService = getClubService();
+    const membership = await clubService.getMembership(competition.clubId, req.user.id);
+
+    if (!membership || membership.status !== 'active') {
+      res.status(403).json({ error: 'Not a member of this club' });
+      return;
+    }
+
+    req.divisionId = divisionId;
+    req.clubId = competition.clubId;
+    req.membership = { role: membership.role };
+    next();
+  } catch (error) {
+    console.error('Division access check error:', error);
+    res.status(500).json({ error: 'Failed to verify division access' });
+  }
+}
+
+/**
+ * POST /api/clubs/:clubId/players - Create player
+ */
+app.post('/api/clubs/:clubId/players', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { name, email, phone } = req.body;
+
+    if (!name) {
+      res.status(400).json({ error: 'Name is required' });
+      return;
+    }
+
+    const playerService = getPlayerService();
+    const result = await playerService.createPlayer(req.clubId!, { name, email, phone });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.status(201).json({ success: true, player: result.data });
+  } catch (error) {
+    console.error('Create player error:', error);
+    res.status(500).json({ error: 'Failed to create player' });
+  }
+});
+
+/**
+ * GET /api/clubs/:clubId/players - List players
+ */
+app.get('/api/clubs/:clubId/players', requireAuth as any, requireClubMember as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const search = req.query.search as string | undefined;
+
+    const playerService = getPlayerService();
+    const players = await playerService.getClubPlayers(req.clubId!, search);
+
+    res.json({ players });
+  } catch (error) {
+    console.error('List players error:', error);
+    res.status(500).json({ error: 'Failed to list players' });
+  }
+});
+
+/**
+ * GET /api/clubs/:clubId/players/duplicates - Find duplicate players
+ */
+app.get('/api/clubs/:clubId/players/duplicates', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { name, email } = req.query;
+
+    if (!name) {
+      res.status(400).json({ error: 'Name is required' });
+      return;
+    }
+
+    const playerService = getPlayerService();
+    const duplicates = await playerService.findDuplicates(req.clubId!, name as string, email as string | undefined);
+
+    res.json({ duplicates });
+  } catch (error) {
+    console.error('Find duplicates error:', error);
+    res.status(500).json({ error: 'Failed to find duplicates' });
+  }
+});
+
+/**
+ * GET /api/clubs/:clubId/players/:playerId - Get player
+ */
+app.get('/api/clubs/:clubId/players/:playerId', requireAuth as any, requireClubMember as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { playerId } = req.params;
+
+    const playerService = getPlayerService();
+    const player = await playerService.getPlayer(playerId);
+
+    if (!player || player.clubId !== req.clubId) {
+      res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    res.json({ player });
+  } catch (error) {
+    console.error('Get player error:', error);
+    res.status(500).json({ error: 'Failed to get player' });
+  }
+});
+
+/**
+ * PUT /api/clubs/:clubId/players/:playerId - Update player
+ */
+app.put('/api/clubs/:clubId/players/:playerId', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { playerId } = req.params;
+    const { name, email, phone } = req.body;
+
+    const playerService = getPlayerService();
+
+    // Verify player belongs to club
+    const existing = await playerService.getPlayer(playerId);
+    if (!existing || existing.clubId !== req.clubId) {
+      res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    const result = await playerService.updatePlayer(playerId, { name, email, phone });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, player: result.data });
+  } catch (error) {
+    console.error('Update player error:', error);
+    res.status(500).json({ error: 'Failed to update player' });
+  }
+});
+
+/**
+ * DELETE /api/clubs/:clubId/players/:playerId - Delete player
+ */
+app.delete('/api/clubs/:clubId/players/:playerId', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { playerId } = req.params;
+
+    const playerService = getPlayerService();
+
+    // Verify player belongs to club
+    const existing = await playerService.getPlayer(playerId);
+    if (!existing || existing.clubId !== req.clubId) {
+      res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    const result = await playerService.deletePlayer(playerId);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete player error:', error);
+    res.status(500).json({ error: 'Failed to delete player' });
+  }
+});
+
+// ==================== Team API Endpoints ====================
+
+/**
+ * POST /api/clubs/:clubId/teams - Create team
+ */
+app.post('/api/clubs/:clubId/teams', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { name, player1Id, player2Id, seed, rating } = req.body;
+
+    if (!player1Id || !player2Id) {
+      res.status(400).json({ error: 'Player1Id and player2Id are required' });
+      return;
+    }
+
+    const playerService = getPlayerService();
+    const result = await playerService.createTeam(req.clubId!, { name, player1Id, player2Id, seed, rating });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.status(201).json({ success: true, team: result.data });
+  } catch (error) {
+    console.error('Create team error:', error);
+    res.status(500).json({ error: 'Failed to create team' });
+  }
+});
+
+/**
+ * GET /api/clubs/:clubId/teams - List teams
+ */
+app.get('/api/clubs/:clubId/teams', requireAuth as any, requireClubMember as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const playerService = getPlayerService();
+    const teams = await playerService.getClubTeams(req.clubId!);
+
+    res.json({ teams });
+  } catch (error) {
+    console.error('List teams error:', error);
+    res.status(500).json({ error: 'Failed to list teams' });
+  }
+});
+
+/**
+ * GET /api/clubs/:clubId/teams/:teamId - Get team
+ */
+app.get('/api/clubs/:clubId/teams/:teamId', requireAuth as any, requireClubMember as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { teamId } = req.params;
+
+    const playerService = getPlayerService();
+    const team = await playerService.getTeam(teamId);
+
+    if (!team || team.clubId !== req.clubId) {
+      res.status(404).json({ error: 'Team not found' });
+      return;
+    }
+
+    res.json({ team });
+  } catch (error) {
+    console.error('Get team error:', error);
+    res.status(500).json({ error: 'Failed to get team' });
+  }
+});
+
+/**
+ * PUT /api/clubs/:clubId/teams/:teamId - Update team
+ */
+app.put('/api/clubs/:clubId/teams/:teamId', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { teamId } = req.params;
+    const { name, seed, rating } = req.body;
+
+    const playerService = getPlayerService();
+
+    // Verify team belongs to club
+    const existing = await playerService.getTeam(teamId);
+    if (!existing || existing.clubId !== req.clubId) {
+      res.status(404).json({ error: 'Team not found' });
+      return;
+    }
+
+    const result = await playerService.updateTeam(teamId, { name, seed, rating });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, team: result.data });
+  } catch (error) {
+    console.error('Update team error:', error);
+    res.status(500).json({ error: 'Failed to update team' });
+  }
+});
+
+/**
+ * DELETE /api/clubs/:clubId/teams/:teamId - Delete team
+ */
+app.delete('/api/clubs/:clubId/teams/:teamId', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { teamId } = req.params;
+
+    const playerService = getPlayerService();
+
+    // Verify team belongs to club
+    const existing = await playerService.getTeam(teamId);
+    if (!existing || existing.clubId !== req.clubId) {
+      res.status(404).json({ error: 'Team not found' });
+      return;
+    }
+
+    const result = await playerService.deleteTeam(teamId);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete team error:', error);
+    res.status(500).json({ error: 'Failed to delete team' });
+  }
+});
+
+// ==================== Entry API Endpoints ====================
+
+/**
+ * POST /api/divisions/:divisionId/entries - Add entry
+ */
+app.post('/api/divisions/:divisionId/entries', requireAuth as any, requireDivisionOrganiser as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { entryType, playerId, teamId, seed } = req.body;
+
+    if (!entryType) {
+      res.status(400).json({ error: 'Entry type is required' });
+      return;
+    }
+
+    const playerService = getPlayerService();
+    const result = await playerService.createEntry(req.divisionId!, {
+      entryType: entryType as EntryType,
+      playerId,
+      teamId,
+      seed
+    });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.status(201).json({ success: true, entry: result.data });
+  } catch (error) {
+    console.error('Create entry error:', error);
+    res.status(500).json({ error: 'Failed to create entry' });
+  }
+});
+
+/**
+ * GET /api/divisions/:divisionId/entries - List entries
+ */
+app.get('/api/divisions/:divisionId/entries', requireAuth as any, requireDivisionAccess as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const playerService = getPlayerService();
+    const entries = await playerService.getDivisionEntries(req.divisionId!);
+
+    res.json({ entries });
+  } catch (error) {
+    console.error('List entries error:', error);
+    res.status(500).json({ error: 'Failed to list entries' });
+  }
+});
+
+/**
+ * GET /api/divisions/:divisionId/entries/:entryId - Get entry
+ */
+app.get('/api/divisions/:divisionId/entries/:entryId', requireAuth as any, requireDivisionAccess as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { entryId } = req.params;
+
+    const playerService = getPlayerService();
+    const entry = await playerService.getEntry(entryId);
+
+    if (!entry || entry.divisionId !== req.divisionId) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+
+    res.json({ entry });
+  } catch (error) {
+    console.error('Get entry error:', error);
+    res.status(500).json({ error: 'Failed to get entry' });
+  }
+});
+
+/**
+ * PUT /api/divisions/:divisionId/entries/:entryId - Update entry
+ */
+app.put('/api/divisions/:divisionId/entries/:entryId', requireAuth as any, requireDivisionOrganiser as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { entryId } = req.params;
+    const { seed } = req.body;
+
+    const playerService = getPlayerService();
+
+    // Verify entry belongs to division
+    const existing = await playerService.getEntry(entryId);
+    if (!existing || existing.divisionId !== req.divisionId) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+
+    const result = await playerService.updateEntry(entryId, { seed });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, entry: result.data });
+  } catch (error) {
+    console.error('Update entry error:', error);
+    res.status(500).json({ error: 'Failed to update entry' });
+  }
+});
+
+/**
+ * DELETE /api/divisions/:divisionId/entries/:entryId - Delete entry
+ */
+app.delete('/api/divisions/:divisionId/entries/:entryId', requireAuth as any, requireDivisionOrganiser as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { entryId } = req.params;
+
+    const playerService = getPlayerService();
+
+    // Verify entry belongs to division
+    const existing = await playerService.getEntry(entryId);
+    if (!existing || existing.divisionId !== req.divisionId) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+
+    const result = await playerService.deleteEntry(entryId);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete entry error:', error);
+    res.status(500).json({ error: 'Failed to delete entry' });
+  }
+});
+
+// ==================== Profile Claiming API Endpoints (Epic 4) ====================
+
+/**
+ * POST /api/clubs/:clubId/players/:playerId/claim-token - Generate claim token
+ */
+app.post('/api/clubs/:clubId/players/:playerId/claim-token', requireAuth as any, requireClubOrganiser as any, async (req: ClubRequest, res: Response) => {
+  try {
+    const { playerId } = req.params;
+
+    const playerService = getPlayerService();
+
+    // Verify player belongs to club
+    const player = await playerService.getPlayer(playerId);
+    if (!player || player.clubId !== req.clubId) {
+      res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    const result = await playerService.generateClaimToken(playerId);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, ...result.data });
+  } catch (error) {
+    console.error('Generate claim token error:', error);
+    res.status(500).json({ error: 'Failed to generate claim token' });
+  }
+});
+
+/**
+ * POST /api/players/claim - Claim a player profile with token
+ */
+app.post('/api/players/claim', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      res.status(400).json({ error: 'Claim token is required' });
+      return;
+    }
+
+    const playerService = getPlayerService();
+    const result = await playerService.claimProfile(token, req.user!.id, req.user!.email);
+
+    if (!result.success) {
+      const statusCode = result.error === 'invalid_claim_token' ? 404 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, player: result.data });
+  } catch (error) {
+    console.error('Claim profile error:', error);
+    res.status(500).json({ error: 'Failed to claim profile' });
+  }
+});
+
+/**
+ * GET /api/players/mine - Get player profiles owned by current user
+ */
+app.get('/api/players/mine', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const playerService = getPlayerService();
+    const players = await playerService.getPlayersByUser(req.user!.id);
+
+    res.json({ players });
+  } catch (error) {
+    console.error('Get my players error:', error);
+    res.status(500).json({ error: 'Failed to get players' });
+  }
+});
+
+// ==================== Self-Registration API Endpoints (Epic 4) ====================
+
+/**
+ * POST /api/divisions/:divisionId/register - Self-register for a competition division
+ */
+app.post('/api/divisions/:divisionId/register', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { divisionId } = req.params;
+    const { entryType, partnerId, seekingPartner } = req.body;
+
+    if (!entryType) {
+      res.status(400).json({ error: 'Entry type is required' });
+      return;
+    }
+
+    const input: SelfRegisterInput = {
+      entryType,
+      divisionId,
+      partnerId,
+      seekingPartner,
+    };
+
+    const playerService = getPlayerService();
+    const result = await playerService.registerForCompetition(divisionId, req.user!.id, input);
+
+    if (!result.success) {
+      const statusCode =
+        result.error === 'division_not_found' || result.error === 'competition_not_found' || result.error === 'player_not_found'
+          ? 404
+          : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.status(201).json({ success: true, entry: result.data });
+  } catch (error) {
+    console.error('Self-register error:', error);
+    res.status(500).json({ error: 'Failed to register' });
+  }
+});
+
+/**
+ * GET /api/competitions/:competitionId/pending-registrations - Get pending registrations
+ */
+app.get('/api/competitions/:competitionId/pending-registrations', requireAuth as any, requireCompetitionOrganiser as any, async (req: CompetitionRequest, res: Response) => {
+  try {
+    const playerService = getPlayerService();
+    const entries = await playerService.getPendingRegistrations(req.competitionId!);
+
+    res.json({ entries });
+  } catch (error) {
+    console.error('Get pending registrations error:', error);
+    res.status(500).json({ error: 'Failed to get pending registrations' });
+  }
+});
+
+/**
+ * POST /api/entries/:entryId/approve - Approve a pending registration
+ */
+app.post('/api/entries/:entryId/approve', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { entryId } = req.params;
+
+    const playerService = getPlayerService();
+    const competitionService = getCompetitionService();
+    const clubService = getClubService();
+
+    // Get entry and verify organiser access
+    const entry = await playerService.getEntry(entryId);
+    if (!entry) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+
+    // Get division -> competition -> club to verify access
+    const division = await competitionService.getDivision(entry.divisionId);
+    if (!division) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    const competition = await competitionService.getCompetition(division.competitionId);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    const membership = await clubService.getMembership(competition.clubId, req.user!.id);
+    if (!membership || (membership.role !== 'admin' && membership.role !== 'organiser')) {
+      res.status(403).json({ error: 'Organiser access required' });
+      return;
+    }
+
+    const result = await playerService.approveRegistration(entryId);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    // Queue notification for registration approval
+    try {
+      const notificationService = getNotificationService();
+      await notificationService.queueRegistrationApproved(entryId);
+    } catch (notifError) {
+      console.error('Failed to queue registration approved notification:', notifError);
+    }
+
+    res.json({ success: true, entry: result.data });
+  } catch (error) {
+    console.error('Approve registration error:', error);
+    res.status(500).json({ error: 'Failed to approve registration' });
+  }
+});
+
+/**
+ * POST /api/entries/:entryId/reject - Reject a pending registration
+ */
+app.post('/api/entries/:entryId/reject', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { entryId } = req.params;
+    const { reason } = req.body;
+
+    const playerService = getPlayerService();
+    const competitionService = getCompetitionService();
+    const clubService = getClubService();
+
+    // Get entry and verify organiser access
+    const entry = await playerService.getEntry(entryId);
+    if (!entry) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+
+    // Get division -> competition -> club to verify access
+    const division = await competitionService.getDivision(entry.divisionId);
+    if (!division) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    const competition = await competitionService.getCompetition(division.competitionId);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    const membership = await clubService.getMembership(competition.clubId, req.user!.id);
+    if (!membership || (membership.role !== 'admin' && membership.role !== 'organiser')) {
+      res.status(403).json({ error: 'Organiser access required' });
+      return;
+    }
+
+    const result = await playerService.rejectRegistration(entryId, reason);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    // Queue notification for registration rejection
+    try {
+      const notificationService = getNotificationService();
+      await notificationService.queueRegistrationRejected(entryId, reason);
+    } catch (notifError) {
+      console.error('Failed to queue registration rejected notification:', notifError);
+    }
+
+    res.json({ success: true, entry: result.data });
+  } catch (error) {
+    console.error('Reject registration error:', error);
+    res.status(500).json({ error: 'Failed to reject registration' });
+  }
+});
+
+/**
+ * POST /api/entries/:entryId/withdraw - Withdraw own registration
+ */
+app.post('/api/entries/:entryId/withdraw', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { entryId } = req.params;
+
+    const playerService = getPlayerService();
+    const result = await playerService.withdrawRegistration(entryId, req.user!.id);
+
+    if (!result.success) {
+      const statusCode = result.error === 'entry_not_found' ? 404 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Withdraw registration error:', error);
+    res.status(500).json({ error: 'Failed to withdraw registration' });
+  }
+});
+
+// ==================== Partner Request API Endpoints (Epic 4) ====================
+
+/**
+ * POST /api/partner-requests - Create partner request
+ */
+app.post('/api/partner-requests', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { divisionId, inviteePlayerId, message } = req.body;
+
+    if (!divisionId || !inviteePlayerId) {
+      res.status(400).json({ error: 'Division ID and invitee player ID are required' });
+      return;
+    }
+
+    // Get requester's player for this club
+    const playerService = getPlayerService();
+    const competitionService = getCompetitionService();
+
+    // Get division to find competition and club
+    const division = await competitionService.getDivision(divisionId);
+    if (!division) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    const competition = await competitionService.getCompetition(division.competitionId);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    // Get requester's player profile for this club
+    const myPlayers = await playerService.getPlayersByUser(req.user!.id);
+    const requesterPlayer = myPlayers.find(p => p.clubId === competition.clubId);
+
+    if (!requesterPlayer) {
+      res.status(400).json({ error: 'No player profile found for this club' });
+      return;
+    }
+
+    const input: CreatePartnerRequestInput = {
+      divisionId,
+      requesterPlayerId: requesterPlayer.id,
+      inviteePlayerId,
+      message,
+    };
+
+    const result = await playerService.createPartnerRequest(input);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    // Queue notification for partner request received
+    try {
+      const notificationService = getNotificationService();
+      await notificationService.queuePartnerRequestReceived(result.data.id);
+    } catch (notifError) {
+      console.error('Failed to queue partner request notification:', notifError);
+    }
+
+    res.status(201).json({ success: true, request: result.data });
+  } catch (error) {
+    console.error('Create partner request error:', error);
+    res.status(500).json({ error: 'Failed to create partner request' });
+  }
+});
+
+/**
+ * GET /api/partner-requests - Get my partner requests
+ */
+app.get('/api/partner-requests', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const playerService = getPlayerService();
+    const requests = await playerService.getPartnerRequestsForUser(req.user!.id);
+
+    res.json({ requests });
+  } catch (error) {
+    console.error('Get partner requests error:', error);
+    res.status(500).json({ error: 'Failed to get partner requests' });
+  }
+});
+
+/**
+ * POST /api/partner-requests/:requestId/accept - Accept partner request
+ */
+app.post('/api/partner-requests/:requestId/accept', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { requestId } = req.params;
+
+    const playerService = getPlayerService();
+    const result = await playerService.acceptPartnerRequest(requestId, req.user!.id);
+
+    if (!result.success) {
+      const statusCode = result.error === 'partner_request_not_found' ? 404 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    // Queue notification for partner request accepted
+    try {
+      const notificationService = getNotificationService();
+      await notificationService.queuePartnerRequestResponse(requestId, true);
+    } catch (notifError) {
+      console.error('Failed to queue partner request accepted notification:', notifError);
+    }
+
+    res.json({ success: true, entry: result.data });
+  } catch (error) {
+    console.error('Accept partner request error:', error);
+    res.status(500).json({ error: 'Failed to accept partner request' });
+  }
+});
+
+/**
+ * POST /api/partner-requests/:requestId/decline - Decline partner request
+ */
+app.post('/api/partner-requests/:requestId/decline', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { requestId } = req.params;
+
+    const playerService = getPlayerService();
+    const result = await playerService.declinePartnerRequest(requestId, req.user!.id);
+
+    if (!result.success) {
+      const statusCode = result.error === 'partner_request_not_found' ? 404 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    // Queue notification for partner request declined
+    try {
+      const notificationService = getNotificationService();
+      await notificationService.queuePartnerRequestResponse(requestId, false);
+    } catch (notifError) {
+      console.error('Failed to queue partner request declined notification:', notifError);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Decline partner request error:', error);
+    res.status(500).json({ error: 'Failed to decline partner request' });
+  }
+});
+
+// ==================== Player Dashboard API Endpoints (Epic 4) ====================
+
+/**
+ * GET /api/dashboard - Get player dashboard
+ */
+app.get('/api/dashboard', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const playerService = getPlayerService();
+    const dashboard = await playerService.getPlayerDashboard(req.user!.id);
+
+    res.json(dashboard);
+  } catch (error) {
+    console.error('Get dashboard error:', error);
+    res.status(500).json({ error: 'Failed to get dashboard' });
+  }
+});
+
 // ==================== Public API Endpoints ====================
 
 /**
@@ -1263,6 +2235,1372 @@ app.get('/api/public/competitions/:slug', async (req: Request, res: Response) =>
   }
 });
 
+// ============================================
+// Draw & Match API Endpoints
+// ============================================
+
+/**
+ * Middleware: Require draw access (checks division -> competition -> club membership)
+ */
+interface DrawRequest extends ClubRequest {
+  drawId?: string;
+  divisionId?: string;
+}
+
+interface MatchRequest extends ClubRequest {
+  matchId?: string;
+}
+
+async function requireDrawAccess(req: DrawRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { drawId } = req.params;
+    const drawService = getDrawService();
+    const competitionService = getCompetitionService();
+    const clubService = getClubService();
+
+    const draw = await drawService.getDraw(drawId);
+    if (!draw) {
+      res.status(404).json({ error: 'Draw not found' });
+      return;
+    }
+
+    // Get division -> competition -> club
+    const divisionResult = await competitionService.getDivision(draw.divisionId);
+    if (!divisionResult) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    const competition = await competitionService.getCompetition(divisionResult.competitionId);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    // Check membership
+    const membership = await clubService.getMembership(competition.clubId, req.user!.id);
+    if (!membership || membership.status !== 'active') {
+      res.status(403).json({ error: 'Not a member of this club' });
+      return;
+    }
+
+    req.clubId = competition.clubId;
+    req.membership = { role: membership.role };
+    req.drawId = drawId;
+    req.divisionId = draw.divisionId;
+    next();
+  } catch (error) {
+    console.error('Draw access check error:', error);
+    res.status(500).json({ error: 'Failed to check draw access' });
+  }
+}
+
+async function requireDrawOrganiser(req: DrawRequest, res: Response, next: NextFunction): Promise<void> {
+  await requireDrawAccess(req, res, () => {
+    if (req.membership && (req.membership.role === 'organiser' || req.membership.role === 'admin')) {
+      next();
+    } else {
+      res.status(403).json({ error: 'Organiser access required' });
+    }
+  });
+}
+
+async function requireMatchAccess(req: MatchRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { matchId } = req.params;
+    const drawService = getDrawService();
+    const competitionService = getCompetitionService();
+    const clubService = getClubService();
+
+    const match = await drawService.getMatch(matchId);
+    if (!match) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const draw = await drawService.getDraw(match.drawId);
+    if (!draw) {
+      res.status(404).json({ error: 'Draw not found' });
+      return;
+    }
+
+    const division = await competitionService.getDivision(draw.divisionId);
+    if (!division) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    const competition = await competitionService.getCompetition(division.competitionId);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    const membership = await clubService.getMembership(competition.clubId, req.user!.id);
+    if (!membership || membership.status !== 'active') {
+      res.status(403).json({ error: 'Not a member of this club' });
+      return;
+    }
+
+    req.clubId = competition.clubId;
+    req.membership = { role: membership.role };
+    req.matchId = matchId;
+    next();
+  } catch (error) {
+    console.error('Match access check error:', error);
+    res.status(500).json({ error: 'Failed to check match access' });
+  }
+}
+
+async function requireMatchOrganiser(req: MatchRequest, res: Response, next: NextFunction): Promise<void> {
+  await requireMatchAccess(req, res, () => {
+    if (req.membership && (req.membership.role === 'organiser' || req.membership.role === 'admin')) {
+      next();
+    } else {
+      res.status(403).json({ error: 'Organiser access required' });
+    }
+  });
+}
+
+/**
+ * POST /api/divisions/:divisionId/draws - Create a draw
+ */
+app.post('/api/divisions/:divisionId/draws', requireAuth as any, requireDivisionOrganiser as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { divisionId } = req.params;
+    const { drawType, config } = req.body;
+
+    if (!drawType) {
+      res.status(400).json({ error: 'Draw type is required' });
+      return;
+    }
+
+    const validDrawTypes: DrawType[] = ['single_elimination', 'double_elimination', 'round_robin'];
+    if (!validDrawTypes.includes(drawType)) {
+      res.status(400).json({ error: 'Invalid draw type' });
+      return;
+    }
+
+    const drawService = getDrawService();
+    const result = await drawService.createDraw(divisionId!, { drawType, config });
+
+    if (!result.success) {
+      const statusCode = result.error === 'insufficient_entries' ? 400 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.status(201).json({ success: true, draw: result.data });
+  } catch (error) {
+    console.error('Create draw error:', error);
+    res.status(500).json({ error: 'Failed to create draw' });
+  }
+});
+
+/**
+ * GET /api/divisions/:divisionId/draws - List draws for a division
+ */
+app.get('/api/divisions/:divisionId/draws', requireAuth as any, requireDivisionAccess as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { divisionId } = req.params;
+    const drawService = getDrawService();
+    const draws = await drawService.getDivisionDraws(divisionId!);
+    res.json({ draws });
+  } catch (error) {
+    console.error('List draws error:', error);
+    res.status(500).json({ error: 'Failed to list draws' });
+  }
+});
+
+/**
+ * GET /api/draws/:drawId - Get draw with matches
+ */
+app.get('/api/draws/:drawId', requireAuth as any, requireDrawAccess as any, async (req: DrawRequest, res: Response) => {
+  try {
+    const drawService = getDrawService();
+    const draw = await drawService.getDrawWithMatches(req.drawId!);
+
+    if (!draw) {
+      res.status(404).json({ error: 'Draw not found' });
+      return;
+    }
+
+    res.json({ draw });
+  } catch (error) {
+    console.error('Get draw error:', error);
+    res.status(500).json({ error: 'Failed to get draw' });
+  }
+});
+
+/**
+ * PUT /api/draws/:drawId/activate - Activate a draw
+ */
+app.put('/api/draws/:drawId/activate', requireAuth as any, requireDrawOrganiser as any, async (req: DrawRequest, res: Response) => {
+  try {
+    const drawService = getDrawService();
+    const result = await drawService.activateDraw(req.drawId!);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    // Queue notifications for draw published
+    try {
+      const notificationService = getNotificationService();
+      await notificationService.queueDrawPublished(req.drawId!);
+    } catch (notifError) {
+      console.error('Failed to queue draw published notification:', notifError);
+    }
+
+    res.json({ success: true, draw: result.data });
+  } catch (error) {
+    console.error('Activate draw error:', error);
+    res.status(500).json({ error: 'Failed to activate draw' });
+  }
+});
+
+/**
+ * DELETE /api/draws/:drawId - Delete a draft draw
+ */
+app.delete('/api/draws/:drawId', requireAuth as any, requireDrawOrganiser as any, async (req: DrawRequest, res: Response) => {
+  try {
+    const drawService = getDrawService();
+    const result = await drawService.deleteDraw(req.drawId!);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete draw error:', error);
+    res.status(500).json({ error: 'Failed to delete draw' });
+  }
+});
+
+/**
+ * GET /api/draws/:drawId/matches - List matches in a draw
+ */
+app.get('/api/draws/:drawId/matches', requireAuth as any, requireDrawAccess as any, async (req: DrawRequest, res: Response) => {
+  try {
+    const drawService = getDrawService();
+    const matches = await drawService.getDrawMatches(req.drawId!);
+    res.json({ matches });
+  } catch (error) {
+    console.error('List matches error:', error);
+    res.status(500).json({ error: 'Failed to list matches' });
+  }
+});
+
+/**
+ * GET /api/matches/:matchId - Get a single match
+ */
+app.get('/api/matches/:matchId', requireAuth as any, requireMatchAccess as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const drawService = getDrawService();
+    const match = await drawService.getMatch(req.matchId!);
+
+    if (!match) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    res.json({ match });
+  } catch (error) {
+    console.error('Get match error:', error);
+    res.status(500).json({ error: 'Failed to get match' });
+  }
+});
+
+/**
+ * PUT /api/matches/:matchId - Update match scheduling
+ */
+app.put('/api/matches/:matchId', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const { scheduledTime, court, status } = req.body;
+
+    const input: UpdateMatchInput = {};
+    if (scheduledTime !== undefined) {
+      input.scheduledTime = scheduledTime ? new Date(scheduledTime) : null;
+    }
+    if (court !== undefined) {
+      input.court = court;
+    }
+    if (status !== undefined) {
+      if (!['scheduled', 'in_progress'].includes(status)) {
+        res.status(400).json({ error: 'Invalid status. Use /result endpoint to complete matches.' });
+        return;
+      }
+      input.status = status;
+    }
+
+    const drawService = getDrawService();
+    const result = await drawService.updateMatch(req.matchId!, input);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    // If match was scheduled with a time, queue notifications
+    if (scheduledTime && result.data) {
+      try {
+        const notificationService = getNotificationService();
+        // Send immediate notification about scheduling
+        await notificationService.queueMatchScheduled(req.matchId!);
+        // Schedule reminders for 24h and 1h before match
+        await notificationService.queueMatchReminder(req.matchId!, 24);
+        await notificationService.queueMatchReminder(req.matchId!, 1);
+      } catch (notifError) {
+        console.error('Failed to queue match notifications:', notifError);
+      }
+    }
+
+    res.json({ success: true, match: result.data });
+  } catch (error) {
+    console.error('Update match error:', error);
+    res.status(500).json({ error: 'Failed to update match' });
+  }
+});
+
+/**
+ * POST /api/matches/:matchId/result - Record match result
+ */
+app.post('/api/matches/:matchId/result', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const { winnerId, score, status } = req.body;
+
+    if (!winnerId) {
+      res.status(400).json({ error: 'Winner ID is required' });
+      return;
+    }
+
+    if (!status || !['completed', 'walkover', 'retired'].includes(status)) {
+      res.status(400).json({ error: 'Valid status is required (completed, walkover, retired)' });
+      return;
+    }
+
+    const input: RecordResultInput = {
+      winnerId,
+      status,
+    };
+
+    if (score) {
+      input.score = score;
+    }
+
+    const drawService = getDrawService();
+    const result = await drawService.recordResult(req.matchId!, input);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, match: result.data });
+  } catch (error) {
+    console.error('Record result error:', error);
+    res.status(500).json({ error: 'Failed to record result' });
+  }
+});
+
+/**
+ * DELETE /api/matches/:matchId/result - Clear match result
+ */
+app.delete('/api/matches/:matchId/result', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const drawService = getDrawService();
+    const result = await drawService.clearResult(req.matchId!);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, match: result.data });
+  } catch (error) {
+    console.error('Clear result error:', error);
+    res.status(500).json({ error: 'Failed to clear result' });
+  }
+});
+
+/**
+ * GET /api/draws/:drawId/standings - Get round robin standings
+ */
+app.get('/api/draws/:drawId/standings', requireAuth as any, requireDrawAccess as any, async (req: DrawRequest, res: Response) => {
+  try {
+    const drawService = getDrawService();
+    const standings = await drawService.getStandings(req.drawId!);
+    res.json({ standings });
+  } catch (error) {
+    console.error('Get standings error:', error);
+    res.status(500).json({ error: 'Failed to get standings' });
+  }
+});
+
+/**
+ * GET /api/public/competitions/:slug/draws - Get draws for a public competition
+ */
+app.get('/api/public/competitions/:slug/draws', async (req: Request, res: Response) => {
+  try {
+    const { slug } = req.params;
+    const competitionService = getCompetitionService();
+    const drawService = getDrawService();
+
+    const competition = await competitionService.getPublicCompetition(slug);
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    // Get all divisions
+    const divisions = await competitionService.getDivisions(competition.id);
+
+    // Get draws for each division (only active/completed)
+    const allDraws = [];
+    for (const division of divisions) {
+      const draws = await drawService.getDivisionDraws(division.id);
+      const publicDraws = draws.filter(d => d.status !== 'draft');
+      allDraws.push(...publicDraws.map(d => ({ ...d, divisionName: division.name })));
+    }
+
+    res.json({ draws: allDraws });
+  } catch (error) {
+    console.error('Get public draws error:', error);
+    res.status(500).json({ error: 'Failed to get draws' });
+  }
+});
+
+/**
+ * GET /api/public/draws/:drawId - Get a public draw with results
+ */
+app.get('/api/public/draws/:drawId', async (req: Request, res: Response) => {
+  try {
+    const { drawId } = req.params;
+    const drawService = getDrawService();
+    const competitionService = getCompetitionService();
+
+    const draw = await drawService.getDrawWithMatches(drawId);
+    if (!draw) {
+      res.status(404).json({ error: 'Draw not found' });
+      return;
+    }
+
+    // Verify the competition is published
+    const division = await competitionService.getDivision(draw.divisionId);
+    if (!division) {
+      res.status(404).json({ error: 'Division not found' });
+      return;
+    }
+
+    const competition = await competitionService.getCompetition(division.competitionId);
+    if (!competition || competition.status === 'draft') {
+      res.status(404).json({ error: 'Draw not found' });
+      return;
+    }
+
+    // Only show non-draft draws publicly
+    if (draw.status === 'draft') {
+      res.status(404).json({ error: 'Draw not found' });
+      return;
+    }
+
+    // Include standings for round robin
+    let standings = null;
+    if (draw.drawType === 'round_robin') {
+      standings = await drawService.getStandings(drawId);
+    }
+
+    res.json({ draw, standings });
+  } catch (error) {
+    console.error('Get public draw error:', error);
+    res.status(500).json({ error: 'Failed to get draw' });
+  }
+});
+
+// ==================== Notification API Endpoints (Epic 5) ====================
+
+import { getNotificationService } from './services/index.js';
+import type { UpdatePreferencesInput, NotificationStatus } from './services/notification-service.js';
+
+/**
+ * GET /api/me/notification-preferences - Get user's notification preferences
+ */
+app.get('/api/me/notification-preferences', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const notificationService = getNotificationService();
+    const preferences = await notificationService.getPreferences(req.user!.id);
+
+    res.json({ preferences });
+  } catch (error) {
+    console.error('Get notification preferences error:', error);
+    res.status(500).json({ error: 'Failed to get notification preferences' });
+  }
+});
+
+/**
+ * PUT /api/me/notification-preferences - Update user's notification preferences
+ */
+app.put('/api/me/notification-preferences', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { matchScheduled, matchReminder, registrationStatus, partnerRequests, competitionUpdates } = req.body;
+
+    const input: UpdatePreferencesInput = {};
+    if (matchScheduled !== undefined) input.matchScheduled = matchScheduled;
+    if (matchReminder !== undefined) input.matchReminder = matchReminder;
+    if (registrationStatus !== undefined) input.registrationStatus = registrationStatus;
+    if (partnerRequests !== undefined) input.partnerRequests = partnerRequests;
+    if (competitionUpdates !== undefined) input.competitionUpdates = competitionUpdates;
+
+    const notificationService = getNotificationService();
+    const preferences = await notificationService.updatePreferences(req.user!.id, input);
+
+    res.json({ success: true, preferences });
+  } catch (error) {
+    console.error('Update notification preferences error:', error);
+    res.status(500).json({ error: 'Failed to update notification preferences' });
+  }
+});
+
+/**
+ * POST /api/competitions/:competitionId/announce - Send announcement to registered players
+ */
+app.post('/api/competitions/:competitionId/announce', requireAuth as any, requireCompetitionOrganiser as any, async (req: CompetitionRequest, res: Response) => {
+  try {
+    const { subject, message } = req.body;
+
+    if (!subject || !message) {
+      res.status(400).json({ error: 'Subject and message are required' });
+      return;
+    }
+
+    const notificationService = getNotificationService();
+    const result = await notificationService.queueAnnouncement(req.competitionId!, subject, message);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true, count: result.count });
+  } catch (error) {
+    console.error('Send announcement error:', error);
+    res.status(500).json({ error: 'Failed to send announcement' });
+  }
+});
+
+/**
+ * GET /api/admin/notifications - List notification queue (admin only)
+ */
+app.get('/api/admin/notifications', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    // Check if user is admin (in admins group)
+    if (!req.user!.roles.includes('admins')) {
+      res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+
+    const status = req.query.status as NotificationStatus | undefined;
+    const limit = parseInt(req.query.limit as string) || 100;
+
+    const notificationService = getNotificationService();
+    const notifications = await notificationService.getQueuedNotifications(status, limit);
+
+    res.json({ notifications });
+  } catch (error) {
+    console.error('Get notifications error:', error);
+    res.status(500).json({ error: 'Failed to get notifications' });
+  }
+});
+
+/**
+ * POST /api/admin/notifications/process - Manually trigger queue processing (admin only)
+ */
+app.post('/api/admin/notifications/process', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    // Check if user is admin (in admins group)
+    if (!req.user!.roles.includes('admins')) {
+      res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+
+    const notificationService = getNotificationService();
+    const result = await notificationService.processQueue();
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Process notifications error:', error);
+    res.status(500).json({ error: 'Failed to process notifications' });
+  }
+});
+
+/**
+ * DELETE /api/admin/notifications/:notificationId - Cancel a pending notification (admin only)
+ */
+app.delete('/api/admin/notifications/:notificationId', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    // Check if user is admin (in admins group)
+    if (!req.user!.roles.includes('admins')) {
+      res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+
+    const { notificationId } = req.params;
+
+    const notificationService = getNotificationService();
+    const result = await notificationService.cancelNotification(notificationId);
+
+    if (!result.success) {
+      const statusCode = result.error === 'notification_not_found' ? 404 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Cancel notification error:', error);
+    res.status(500).json({ error: 'Failed to cancel notification' });
+  }
+});
+
+// ==================== Live Scoring API Endpoints (Epic 6) ====================
+
+import type { StartMatchInput, RecordPointInput, PauseMatchInput, AbandonMatchInput } from './services/live-score-service.js';
+import type { LiveEvent, MatchStartedData, ScoreChangeData, MatchPausedData, MatchResumedData, MatchCompletedData, MatchAbandonedData } from './services/live-events-service.js';
+import { v4 as uuidv4 } from 'uuid';
+
+// Extend request to include match context
+/**
+ * GET /api/matches/:matchId/live-score - Get current live score
+ */
+app.get('/api/matches/:matchId/live-score', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const liveScoreService = getLiveScoreService();
+    const score = await liveScoreService.getLiveScore(req.matchId!);
+
+    if (!score) {
+      res.json({ score: null, status: 'not_started' });
+      return;
+    }
+
+    const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
+    res.json({ score, displayScore });
+  } catch (error) {
+    console.error('Get live score error:', error);
+    res.status(500).json({ error: 'Failed to get live score' });
+  }
+});
+
+/**
+ * POST /api/matches/:matchId/start - Start a match
+ */
+app.post('/api/matches/:matchId/start', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const { servingEntry } = req.body as StartMatchInput;
+
+    if (servingEntry !== 1 && servingEntry !== 2) {
+      res.status(400).json({ error: 'servingEntry must be 1 or 2' });
+      return;
+    }
+
+    const liveScoreService = getLiveScoreService();
+    const result = await liveScoreService.startMatch(req.matchId!, { servingEntry });
+
+    if (!result.success) {
+      const statusCode = result.error === 'match_not_found' ? 404 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
+    const liveEventsService = getLiveEventsService();
+    const event: LiveEvent = {
+      type: 'match_started',
+      matchId: req.matchId!,
+      timestamp: new Date().toISOString(),
+      data: {
+        servingEntry,
+        displayScore: displayScore!,
+      } as MatchStartedData,
+    };
+    liveEventsService.broadcastToMatch(req.matchId!, event);
+    if (req.competitionId) {
+      liveEventsService.broadcastToCompetition(req.competitionId, event);
+    }
+
+    res.json({ success: true, score: result.data, displayScore });
+  } catch (error) {
+    console.error('Start match error:', error);
+    res.status(500).json({ error: 'Failed to start match' });
+  }
+});
+
+/**
+ * POST /api/matches/:matchId/point - Record a point
+ */
+app.post('/api/matches/:matchId/point', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const { winnerEntry } = req.body as RecordPointInput;
+
+    if (winnerEntry !== 1 && winnerEntry !== 2) {
+      res.status(400).json({ error: 'winnerEntry must be 1 or 2' });
+      return;
+    }
+
+    const liveScoreService = getLiveScoreService();
+    const beforeScore = await liveScoreService.getLiveScore(req.matchId!);
+    const isBreakPoint = beforeScore ? isBreakPointCheck(beforeScore) : false;
+    const isSetPoint = beforeScore ? isSetPointCheck(beforeScore) : false;
+    const isMatchPoint = beforeScore ? isMatchPointCheck(beforeScore) : false;
+
+    const result = await liveScoreService.recordPoint(req.matchId!, { winnerEntry });
+
+    if (!result.success) {
+      const statusCode = result.error === 'live_score_not_found' ? 404 : 400;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
+    const liveEventsService = getLiveEventsService();
+
+    let event: LiveEvent;
+    if (result.data.status === 'completed') {
+      let entry1Sets = 0;
+      let entry2Sets = 0;
+      for (let i = 0; i < result.data.entry1Games.length; i++) {
+        if (result.data.entry1Games[i] > result.data.entry2Games[i]) entry1Sets++;
+        else if (result.data.entry2Games[i] > result.data.entry1Games[i]) entry2Sets++;
+      }
+      const winner = entry1Sets > entry2Sets ? 1 : 2;
+
+      event = {
+        type: 'match_completed',
+        matchId: req.matchId!,
+        timestamp: new Date().toISOString(),
+        data: {
+          winner,
+          finalScore: displayScore!,
+        } as MatchCompletedData,
+      };
+    } else {
+      event = {
+        type: 'score_change',
+        matchId: req.matchId!,
+        timestamp: new Date().toISOString(),
+        data: {
+          pointWinner: winnerEntry,
+          displayScore: displayScore!,
+          isBreakPoint,
+          isSetPoint,
+          isMatchPoint,
+        } as ScoreChangeData,
+      };
+    }
+
+    liveEventsService.broadcastToMatch(req.matchId!, event);
+    if (req.competitionId) {
+      liveEventsService.broadcastToCompetition(req.competitionId, event);
+    }
+
+    res.json({ success: true, score: result.data, displayScore });
+  } catch (error) {
+    console.error('Record point error:', error);
+    res.status(500).json({ error: 'Failed to record point' });
+  }
+});
+
+function isBreakPointCheck(score: any): boolean {
+  if (score.isTiebreak) return false;
+  const receiverPoints = score.servingEntry === 1 ? score.entry2Points : score.entry1Points;
+  const serverPoints = score.servingEntry === 1 ? score.entry1Points : score.entry2Points;
+  if (receiverPoints >= 3 && serverPoints < 3) return true;
+  if (receiverPoints > serverPoints && receiverPoints >= 4) return true;
+  return false;
+}
+
+function isSetPointCheck(score: any): boolean {
+  const currentSetIndex = score.currentSet - 1;
+  const g1 = score.entry1Games[currentSetIndex] || 0;
+  const g2 = score.entry2Games[currentSetIndex] || 0;
+  const entry1CouldWin = g1 >= 5 && g1 - g2 >= 1;
+  const entry2CouldWin = g2 >= 5 && g2 - g1 >= 1;
+  if (!entry1CouldWin && !entry2CouldWin) return false;
+  if (score.isTiebreak) {
+    const tb1 = score.tiebreakEntry1Points;
+    const tb2 = score.tiebreakEntry2Points;
+    if (tb1 >= 6 && tb1 - tb2 >= 1) return true;
+    if (tb2 >= 6 && tb2 - tb1 >= 1) return true;
+  } else {
+    const p1 = score.entry1Points;
+    const p2 = score.entry2Points;
+    if (entry1CouldWin && p1 >= 3 && (p2 < 3 || p1 > p2)) return true;
+    if (entry2CouldWin && p2 >= 3 && (p1 < 3 || p2 > p1)) return true;
+  }
+  return false;
+}
+
+function isMatchPointCheck(score: any): boolean {
+  let entry1SetsWon = 0;
+  let entry2SetsWon = 0;
+  for (let i = 0; i < score.entry1Games.length; i++) {
+    const g1 = score.entry1Games[i];
+    const g2 = score.entry2Games[i];
+    if (g1 > g2) entry1SetsWon++;
+    else if (g2 > g1) entry2SetsWon++;
+  }
+  const entry1CouldWinMatch = entry1SetsWon === 1;
+  const entry2CouldWinMatch = entry2SetsWon === 1;
+  if (!entry1CouldWinMatch && !entry2CouldWinMatch) return false;
+  return isSetPointCheck(score);
+}
+
+/**
+ * POST /api/matches/:matchId/undo - Undo last point
+ */
+app.post('/api/matches/:matchId/undo', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const liveScoreService = getLiveScoreService();
+    const result = await liveScoreService.undoLastPoint(req.matchId!);
+
+    if (!result.success) {
+      const statusCode = result.error === 'no_points_to_undo' ? 400 : 404;
+      res.status(statusCode).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
+    const liveEventsService = getLiveEventsService();
+    const event: LiveEvent = {
+      type: 'score_change',
+      matchId: req.matchId!,
+      timestamp: new Date().toISOString(),
+      data: {
+        pointWinner: 0 as any,
+        displayScore: displayScore!,
+        isBreakPoint: false,
+        isSetPoint: false,
+        isMatchPoint: false,
+      } as ScoreChangeData,
+    };
+    liveEventsService.broadcastToMatch(req.matchId!, event);
+    if (req.competitionId) {
+      liveEventsService.broadcastToCompetition(req.competitionId, event);
+    }
+
+    res.json({ success: true, score: result.data, displayScore });
+  } catch (error) {
+    console.error('Undo point error:', error);
+    res.status(500).json({ error: 'Failed to undo point' });
+  }
+});
+
+/**
+ * POST /api/matches/:matchId/pause - Pause match
+ */
+app.post('/api/matches/:matchId/pause', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const { reason } = req.body as PauseMatchInput;
+
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+
+    const liveScoreService = getLiveScoreService();
+    const result = await liveScoreService.pauseMatch(req.matchId!, { reason });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
+    const liveEventsService = getLiveEventsService();
+    const event: LiveEvent = {
+      type: 'match_paused',
+      matchId: req.matchId!,
+      timestamp: new Date().toISOString(),
+      data: {
+        reason,
+        displayScore: displayScore!,
+      } as MatchPausedData,
+    };
+    liveEventsService.broadcastToMatch(req.matchId!, event);
+    if (req.competitionId) {
+      liveEventsService.broadcastToCompetition(req.competitionId, event);
+    }
+
+    res.json({ success: true, score: result.data, displayScore });
+  } catch (error) {
+    console.error('Pause match error:', error);
+    res.status(500).json({ error: 'Failed to pause match' });
+  }
+});
+
+/**
+ * POST /api/matches/:matchId/resume - Resume match
+ */
+app.post('/api/matches/:matchId/resume', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const liveScoreService = getLiveScoreService();
+    const result = await liveScoreService.resumeMatch(req.matchId!);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
+    const liveEventsService = getLiveEventsService();
+    const event: LiveEvent = {
+      type: 'match_resumed',
+      matchId: req.matchId!,
+      timestamp: new Date().toISOString(),
+      data: {
+        displayScore: displayScore!,
+      } as MatchResumedData,
+    };
+    liveEventsService.broadcastToMatch(req.matchId!, event);
+    if (req.competitionId) {
+      liveEventsService.broadcastToCompetition(req.competitionId, event);
+    }
+
+    res.json({ success: true, score: result.data, displayScore });
+  } catch (error) {
+    console.error('Resume match error:', error);
+    res.status(500).json({ error: 'Failed to resume match' });
+  }
+});
+
+/**
+ * POST /api/matches/:matchId/abandon - Abandon match
+ */
+app.post('/api/matches/:matchId/abandon', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const { reason } = req.body as AbandonMatchInput;
+
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+
+    const liveScoreService = getLiveScoreService();
+    const result = await liveScoreService.abandonMatch(req.matchId!, { reason });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
+    const liveEventsService = getLiveEventsService();
+    const event: LiveEvent = {
+      type: 'match_abandoned',
+      matchId: req.matchId!,
+      timestamp: new Date().toISOString(),
+      data: {
+        reason,
+        displayScore: displayScore!,
+      } as MatchAbandonedData,
+    };
+    liveEventsService.broadcastToMatch(req.matchId!, event);
+    if (req.competitionId) {
+      liveEventsService.broadcastToCompetition(req.competitionId, event);
+    }
+
+    res.json({ success: true, score: result.data, displayScore });
+  } catch (error) {
+    console.error('Abandon match error:', error);
+    res.status(500).json({ error: 'Failed to abandon match' });
+  }
+});
+
+/**
+ * GET /api/matches/:matchId/history - Get point history
+ */
+app.get('/api/matches/:matchId/history', requireAuth as any, requireMatchOrganiser as any, async (req: MatchRequest, res: Response) => {
+  try {
+    const liveScoreService = getLiveScoreService();
+    const history = await liveScoreService.getPointHistory(req.matchId!);
+
+    res.json({ history });
+  } catch (error) {
+    console.error('Get point history error:', error);
+    res.status(500).json({ error: 'Failed to get point history' });
+  }
+});
+
+// ==================== SSE Stream Endpoints (Epic 6) ====================
+
+/**
+ * GET /api/live/matches/:matchId/stream - SSE stream for a single match (authenticated)
+ */
+app.get('/api/live/matches/:matchId/stream', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { matchId } = req.params;
+
+    const drawService = getDrawService();
+    const match = await drawService.getMatch(matchId);
+    if (!match) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const liveEventsService = getLiveEventsService();
+    liveEventsService.setupSSEResponse(res);
+
+    const clientId = uuidv4();
+    liveEventsService.addClient(clientId, res, matchId);
+
+    const liveScoreService = getLiveScoreService();
+    const displayScore = await liveScoreService.getDisplayScore(matchId);
+    if (displayScore) {
+      const event: LiveEvent = {
+        type: 'score_change',
+        matchId,
+        timestamp: new Date().toISOString(),
+        data: {
+          pointWinner: 0 as any,
+          displayScore,
+          isBreakPoint: false,
+          isSetPoint: false,
+          isMatchPoint: false,
+        } as ScoreChangeData,
+      };
+      liveEventsService.sendEvent(res, event);
+    }
+  } catch (error) {
+    console.error('SSE stream error:', error);
+    res.status(500).json({ error: 'Failed to establish stream' });
+  }
+});
+
+/**
+ * GET /api/live/competitions/:competitionId/stream - SSE stream for all matches in a competition (authenticated)
+ */
+app.get('/api/live/competitions/:competitionId/stream', requireAuth as any, requireCompetitionAccess as any, async (req: CompetitionRequest, res: Response) => {
+  try {
+    const { competitionId } = req.params;
+
+    const liveEventsService = getLiveEventsService();
+    liveEventsService.setupSSEResponse(res);
+
+    const clientId = uuidv4();
+    liveEventsService.addClient(clientId, res, undefined, competitionId);
+
+    const liveScoreService = getLiveScoreService();
+    const liveMatches = await liveScoreService.getLiveMatchesForCompetition(competitionId);
+
+    for (const score of liveMatches) {
+      const displayScore = await liveScoreService.getDisplayScore(score.matchId);
+      if (displayScore) {
+        const event: LiveEvent = {
+          type: 'score_change',
+          matchId: score.matchId,
+          timestamp: new Date().toISOString(),
+          data: {
+            pointWinner: 0 as any,
+            displayScore,
+            isBreakPoint: false,
+            isSetPoint: false,
+            isMatchPoint: false,
+          } as ScoreChangeData,
+        };
+        liveEventsService.sendEvent(res, event);
+      }
+    }
+  } catch (error) {
+    console.error('SSE stream error:', error);
+    res.status(500).json({ error: 'Failed to establish stream' });
+  }
+});
+
+// ==================== Public Live Scoring Endpoints (Epic 6) ====================
+
+/**
+ * GET /api/public/live/competitions/:slug - Get all live matches for a published competition
+ */
+app.get('/api/public/live/competitions/:slug', async (req: Request, res: Response) => {
+  try {
+    const { slug } = req.params;
+
+    const competitionService = getCompetitionService();
+    const competition = await competitionService.getCompetitionBySlug(slug);
+
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    if (competition.status === 'draft') {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    const liveScoreService = getLiveScoreService();
+    const liveMatches = await liveScoreService.getLiveMatchesForCompetition(competition.id);
+
+    const matches = await Promise.all(
+      liveMatches.map(async (score) => {
+        const displayScore = await liveScoreService.getDisplayScore(score.matchId);
+        return { ...score, displayScore };
+      })
+    );
+
+    res.json({ competition: { id: competition.id, name: competition.name }, matches });
+  } catch (error) {
+    console.error('Get public live matches error:', error);
+    res.status(500).json({ error: 'Failed to get live matches' });
+  }
+});
+
+/**
+ * GET /api/public/live/matches/:matchId - Get live score for a single match (public)
+ */
+app.get('/api/public/live/matches/:matchId', async (req: Request, res: Response) => {
+  try {
+    const { matchId } = req.params;
+
+    const drawService = getDrawService();
+    const match = await drawService.getMatch(matchId);
+
+    if (!match) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const db = (await import('./db/database.js')).getDatabase();
+    const drawRow = db.prepare('SELECT division_id FROM draws WHERE id = ?').get(match.drawId) as { division_id: string } | undefined;
+    if (!drawRow) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const divisionRow = db.prepare('SELECT competition_id FROM divisions WHERE id = ?').get(drawRow.division_id) as { competition_id: string } | undefined;
+    if (!divisionRow) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const competitionService = getCompetitionService();
+    const competition = await competitionService.getCompetition(divisionRow.competition_id);
+    if (!competition || competition.status === 'draft') {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const liveScoreService = getLiveScoreService();
+    const score = await liveScoreService.getLiveScore(matchId);
+    const displayScore = await liveScoreService.getDisplayScore(matchId);
+
+    res.json({ score, displayScore });
+  } catch (error) {
+    console.error('Get public live score error:', error);
+    res.status(500).json({ error: 'Failed to get live score' });
+  }
+});
+
+/**
+ * GET /api/public/live/matches/:matchId/stream - Public SSE stream for a match
+ */
+app.get('/api/public/live/matches/:matchId/stream', async (req: Request, res: Response) => {
+  try {
+    const { matchId } = req.params;
+
+    const drawService = getDrawService();
+    const match = await drawService.getMatch(matchId);
+
+    if (!match) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const db = (await import('./db/database.js')).getDatabase();
+    const drawRow = db.prepare('SELECT division_id FROM draws WHERE id = ?').get(match.drawId) as { division_id: string } | undefined;
+    if (!drawRow) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const divisionRow = db.prepare('SELECT competition_id FROM divisions WHERE id = ?').get(drawRow.division_id) as { competition_id: string } | undefined;
+    if (!divisionRow) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const competitionService = getCompetitionService();
+    const competition = await competitionService.getCompetition(divisionRow.competition_id);
+    if (!competition || competition.status === 'draft') {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const liveEventsService = getLiveEventsService();
+    liveEventsService.setupSSEResponse(res);
+
+    const clientId = uuidv4();
+    liveEventsService.addClient(clientId, res, matchId);
+
+    const liveScoreService = getLiveScoreService();
+    const displayScore = await liveScoreService.getDisplayScore(matchId);
+    if (displayScore) {
+      const event: LiveEvent = {
+        type: 'score_change',
+        matchId,
+        timestamp: new Date().toISOString(),
+        data: {
+          pointWinner: 0 as any,
+          displayScore,
+          isBreakPoint: false,
+          isSetPoint: false,
+          isMatchPoint: false,
+        } as ScoreChangeData,
+      };
+      liveEventsService.sendEvent(res, event);
+    }
+  } catch (error) {
+    console.error('Public SSE stream error:', error);
+    res.status(500).json({ error: 'Failed to establish stream' });
+  }
+});
+
+/**
+ * GET /api/public/competitions/:slug/bracket - Get bracket data for a published competition
+ */
+app.get('/api/public/competitions/:slug/bracket', async (req: Request, res: Response) => {
+  try {
+    const { slug } = req.params;
+
+    const competitionService = getCompetitionService();
+    const competition = await competitionService.getCompetitionBySlug(slug);
+
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    if (competition.status === 'draft') {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    const divisions = await competitionService.getDivisions(competition.id);
+    const drawService = getDrawService();
+
+    const brackets = await Promise.all(
+      divisions.map(async (division) => {
+        const draws = await drawService.getDivisionDraws(division.id);
+        const drawsWithMatches = await Promise.all(
+          draws.map(async (draw) => {
+            const matches = await drawService.getDrawMatches(draw.id);
+            return { ...draw, matches };
+          })
+        );
+        return { division, draws: drawsWithMatches };
+      })
+    );
+
+    res.json({ competition: { id: competition.id, name: competition.name }, brackets });
+  } catch (error) {
+    console.error('Get public bracket error:', error);
+    res.status(500).json({ error: 'Failed to get bracket' });
+  }
+});
+
+/**
+ * GET /api/public/competitions/:slug/standings - Get standings for a published competition (round robin)
+ */
+app.get('/api/public/competitions/:slug/standings', async (req: Request, res: Response) => {
+  try {
+    const { slug } = req.params;
+
+    const competitionService = getCompetitionService();
+    const competition = await competitionService.getCompetitionBySlug(slug);
+
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    if (competition.status === 'draft') {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    const divisions = await competitionService.getDivisions(competition.id);
+    const drawService = getDrawService();
+
+    const standingsData = await Promise.all(
+      divisions.map(async (division) => {
+        const draws = await drawService.getDivisionDraws(division.id);
+        const roundRobinDraws = draws.filter(d => d.drawType === 'round_robin');
+
+        const standingsPerDraw = await Promise.all(
+          roundRobinDraws.map(async (draw) => {
+            const standings = await drawService.getStandings(draw.id);
+            return { draw, standings };
+          })
+        );
+
+        return { division, standings: standingsPerDraw };
+      })
+    );
+
+    res.json({ competition: { id: competition.id, name: competition.name }, standings: standingsData });
+  } catch (error) {
+    console.error('Get public standings error:', error);
+    res.status(500).json({ error: 'Failed to get standings' });
+  }
+});
+
+/**
+ * GET /api/public/matches/:matchId/history - Get point history for a match (public)
+ */
+app.get('/api/public/matches/:matchId/history', async (req: Request, res: Response) => {
+  try {
+    const { matchId } = req.params;
+
+    const drawService = getDrawService();
+    const match = await drawService.getMatch(matchId);
+
+    if (!match) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const db = (await import('./db/database.js')).getDatabase();
+    const drawRow = db.prepare('SELECT division_id FROM draws WHERE id = ?').get(match.drawId) as { division_id: string } | undefined;
+    if (!drawRow) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const divisionRow = db.prepare('SELECT competition_id FROM divisions WHERE id = ?').get(drawRow.division_id) as { competition_id: string } | undefined;
+    if (!divisionRow) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const competitionService = getCompetitionService();
+    const competition = await competitionService.getCompetition(divisionRow.competition_id);
+    if (!competition || competition.status === 'draft') {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    const liveScoreService = getLiveScoreService();
+    const history = await liveScoreService.getPointHistory(matchId);
+
+    res.json({ history });
+  } catch (error) {
+    console.error('Get public point history error:', error);
+    res.status(500).json({ error: 'Failed to get point history' });
+  }
+});
+
 // Proxy all other requests to Vite dev server
 const viteProxy = createProxyMiddleware({
   target: `http://localhost:${VITE_PORT}`,
@@ -1280,13 +3618,69 @@ async function seedDemoUsers() {
 
   const demoUsers = [
     { email: 'admin@example.com', password: 'admin123', name: 'Admin User' },
-    { email: 'demo@example.com', password: 'demo123', name: 'Demo User' },
+    { email: 'demo@example.com', password: 'demo1234', name: 'Demo User' },
   ];
 
   for (const user of demoUsers) {
     const existing = await userService.findByEmail(user.email);
     if (!existing) {
-      await userService.register(user);
+      const result = await userService.register(user);
+      if (!result.success) {
+        console.error(`Failed to seed user ${user.email}:`, result.message);
+      }
+    }
+  }
+}
+
+/**
+ * Seed demo clubs for demo users if they don't have any
+ */
+async function seedDemoClubs() {
+  const userService = getUserService();
+  const clubService = getClubService();
+
+  // Get admin user
+  const adminUser = await userService.findByEmail('admin@example.com');
+  if (!adminUser) {
+    console.error('Admin user not found for club seeding');
+    return;
+  }
+
+  // Check if admin already has clubs
+  const existingClubs = await clubService.getUserClubs(adminUser.id);
+  if (existingClubs.length > 0) {
+    return; // Already has clubs
+  }
+
+  // Create demo clubs
+  const demoClubs = [
+    { name: 'City Tennis Club', region: 'Metro Area' },
+    { name: 'Riverside Squash', region: 'West District' },
+  ];
+
+  for (const club of demoClubs) {
+    const result = await clubService.createClub(club, adminUser.id);
+    if (!result.success) {
+      console.error(`Failed to seed club ${club.name}:`, result.message);
+    }
+  }
+
+  // Also add demo user to the first club
+  const demoUser = await userService.findByEmail('demo@example.com');
+  if (demoUser) {
+    const adminClubs = await clubService.getUserClubs(adminUser.id);
+    if (adminClubs.length > 0) {
+      // Invite demo user as organiser to first club
+      await clubService.createInvite(
+        adminClubs[0].clubId,
+        { email: demoUser.email, role: 'organiser' },
+        adminUser.id
+      );
+      // Auto-accept the invite (for demo purposes)
+      const invites = await clubService.getInvitesForEmail(demoUser.email);
+      if (invites.length > 0) {
+        await clubService.acceptInvite(invites[0].id, demoUser.id);
+      }
     }
   }
 }
@@ -1318,8 +3712,9 @@ async function startServer() {
     server = https.createServer(httpsOptions, app);
 
     server.listen(HTTPS_PORT, async () => {
-      // Seed demo users if they don't exist
+      // Seed demo users and clubs if they don't exist
       await seedDemoUsers();
+      await seedDemoClubs();
 
       console.log('\n🔐 Dev server running with HTTPS');
       console.log(`   https://localhost:${HTTPS_PORT}\n`);
@@ -1333,7 +3728,10 @@ async function startServer() {
       console.log(`   POST /auth/change-password - Change password\n`);
       console.log('👤 Demo users:');
       console.log(`   - admin@example.com / admin123`);
-      console.log(`   - demo@example.com / demo123`);
+      console.log(`   - demo@example.com / demo1234`);
+      console.log('\n🏟️  Demo clubs seeded for admin user:');
+      console.log('   - City Tennis Club');
+      console.log('   - Riverside Squash');
       console.log('\n');
     });
   } else {
