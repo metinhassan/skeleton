@@ -4,10 +4,13 @@
  */
 
 import type { Competition, CompetitionResponse } from '../types/competition.js';
-import type { Division } from '../types/division.js';
+import type { Division, DivisionListResponse } from '../types/division.js';
+import type { Entry, EntryListResponse } from '../types/entry.js';
 import { CompetitionForm } from './competition-form.js';
 import { DivisionList } from './division-list.js';
 import { DivisionForm } from './division-form.js';
+import { EntryList } from './entry-list.js';
+import { EntryForm } from './entry-form.js';
 import { toast } from './toast.js';
 
 export type CompetitionTab = 'overview' | 'divisions' | 'entries' | 'draw' | 'settings';
@@ -33,6 +36,11 @@ export class CompetitionDetail {
   private editForm: CompetitionForm | null = null;
   private divisionList: DivisionList | null = null;
   private divisionForm: DivisionForm | null = null;
+  private entryList: EntryList | null = null;
+  private entryForm: EntryForm | null = null;
+  private divisions: Division[] = [];
+  private selectedDivisionId: string | null = null;
+  private isLoadingDivisions = false;
 
   constructor(options: CompetitionDetailOptions) {
     this.container = options.container;
@@ -334,15 +342,286 @@ export class CompetitionDetail {
   private renderEntriesTab(): string {
     return `
       <div class="tab-content tab-content--active">
-        <div class="empty-state">
-          <div class="empty-state__icon">👥</div>
-          <h3 class="empty-state__title">Entries</h3>
-          <p class="empty-state__description">
-            Entry management will be available in Phase 5.
-          </p>
+        <div class="entries-tab">
+          ${this.renderDivisionSelector()}
+          <div id="entry-list-container"></div>
         </div>
       </div>
     `;
+  }
+
+  private renderDivisionSelector(): string {
+    if (this.isLoadingDivisions) {
+      return `
+        <div class="division-selector">
+          <div class="skeleton skeleton-line" style="width: 200px; height: 40px;"></div>
+        </div>
+      `;
+    }
+
+    if (this.divisions.length === 0) {
+      return `
+        <div class="entries-empty-divisions">
+          <div class="empty-state">
+            <div class="empty-state__icon">&#128196;</div>
+            <h3 class="empty-state__title">No divisions yet</h3>
+            <p class="empty-state__description">
+              Create divisions first before adding entries.
+            </p>
+            <button class="btn btn-primary" id="go-to-divisions-btn">Go to Divisions</button>
+          </div>
+        </div>
+      `;
+    }
+
+    const pendingCounts = this.getPendingCountsByDivision();
+
+    return `
+      <div class="division-selector">
+        <label class="division-selector__label">Division:</label>
+        <select class="division-selector__select form-select" id="division-select">
+          ${this.divisions
+            .map((div) => {
+              const pendingCount = pendingCounts.get(div.id) || 0;
+              const pendingBadge = pendingCount > 0 ? ` (${pendingCount} pending)` : '';
+              return `
+                <option value="${div.id}" ${div.id === this.selectedDivisionId ? 'selected' : ''}>
+                  ${this.escapeHtml(div.name)}${pendingBadge}
+                </option>
+              `;
+            })
+            .join('')}
+        </select>
+      </div>
+    `;
+  }
+
+  private getPendingCountsByDivision(): Map<string, number> {
+    const counts = new Map<string, number>();
+    // This would be populated from API if we have requiresApproval
+    // For now, return empty map - the entry list will show pending count internally
+    return counts;
+  }
+
+  private async initEntriesTab(): Promise<void> {
+    if (!this.competition) return;
+
+    // Load divisions first
+    this.isLoadingDivisions = true;
+    this.updateEntriesTabContent();
+
+    try {
+      const response = await fetch(`/api/competitions/${this.competition.id}/divisions`, {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch divisions');
+      }
+
+      const data: DivisionListResponse = await response.json();
+      this.divisions = data.divisions || [];
+
+      // Select first division by default
+      if (this.divisions.length > 0 && !this.selectedDivisionId) {
+        this.selectedDivisionId = this.divisions[0].id;
+      }
+    } catch (error) {
+      console.error('Failed to fetch divisions:', error);
+      toast.error('Failed to load divisions');
+      this.divisions = [];
+    } finally {
+      this.isLoadingDivisions = false;
+      this.updateEntriesTabContent();
+    }
+
+    // Initialize entry list if we have a selected division
+    if (this.selectedDivisionId) {
+      this.initEntryList(this.selectedDivisionId);
+    }
+
+    this.bindEntriesTabEvents();
+  }
+
+  private updateEntriesTabContent(): void {
+    const selectorContainer = this.container.querySelector('.entries-tab');
+    if (selectorContainer) {
+      const divisionSelectorHtml = this.renderDivisionSelector();
+      const existingSelector = selectorContainer.querySelector('.division-selector, .entries-empty-divisions');
+      if (existingSelector) {
+        existingSelector.outerHTML = divisionSelectorHtml;
+      }
+      this.bindEntriesTabEvents();
+    }
+  }
+
+  private bindEntriesTabEvents(): void {
+    // Division selector
+    const divisionSelect = this.container.querySelector('#division-select') as HTMLSelectElement;
+    if (divisionSelect) {
+      divisionSelect.addEventListener('change', () => {
+        this.selectedDivisionId = divisionSelect.value;
+        this.initEntryList(this.selectedDivisionId);
+      });
+    }
+
+    // Go to divisions button (when no divisions exist)
+    const goToDivisionsBtn = this.container.querySelector('#go-to-divisions-btn');
+    if (goToDivisionsBtn) {
+      goToDivisionsBtn.addEventListener('click', () => this.switchTab('divisions'));
+    }
+  }
+
+  private initEntryList(divisionId: string): void {
+    if (!this.competition) return;
+
+    const container = this.container.querySelector('#entry-list-container') as HTMLElement;
+    if (!container) return;
+
+    // Get selected division
+    const selectedDivision = this.divisions.find((d) => d.id === divisionId);
+    if (!selectedDivision) return;
+
+    // Cleanup existing list
+    if (this.entryList) {
+      this.entryList.destroy();
+    }
+
+    this.entryList = new EntryList({
+      container,
+      divisionId,
+      competitionId: this.competition.id,
+      requiresApproval: this.competition.requiresApproval,
+      drawStatus: selectedDivision.drawStatus,
+      onAddEntry: () => this.showCreateEntry(),
+      onEditEntry: (entry) => this.showEditEntry(entry),
+      onDeleteEntry: (entry) => this.handleDeleteEntry(entry),
+      onApproveEntry: () => this.refreshEntryList(),
+      onRejectEntry: () => this.refreshEntryList(),
+    });
+  }
+
+  private async fetchEntriesForDivision(divisionId: string): Promise<Entry[]> {
+    try {
+      const response = await fetch(`/api/divisions/${divisionId}/entries`, {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch entries');
+      }
+
+      const data: EntryListResponse = await response.json();
+      return data.entries || [];
+    } catch (error) {
+      console.error('Failed to fetch entries:', error);
+      return [];
+    }
+  }
+
+  private async showCreateEntry(): Promise<void> {
+    if (!this.competition || !this.selectedDivisionId) return;
+
+    // Fetch existing entries to check for duplicates
+    const existingEntries = await this.fetchEntriesForDivision(this.selectedDivisionId);
+
+    this.entryForm = new EntryForm({
+      mode: 'create',
+      divisionId: this.selectedDivisionId,
+      clubId: this.clubId,
+      existingEntries,
+      onSuccess: () => {
+        this.entryForm = null;
+        this.refreshEntryList();
+        // Update entry count
+        if (this.competition) {
+          this.competition.entryCount++;
+        }
+      },
+      onCancel: () => {
+        this.entryForm = null;
+      },
+    });
+  }
+
+  private async showEditEntry(entry: Entry): Promise<void> {
+    if (!this.competition || !this.selectedDivisionId) return;
+
+    // Fetch existing entries to check for duplicate seeds
+    const existingEntries = await this.fetchEntriesForDivision(this.selectedDivisionId);
+
+    this.entryForm = new EntryForm({
+      mode: 'edit',
+      divisionId: this.selectedDivisionId,
+      clubId: this.clubId,
+      entry,
+      existingEntries,
+      onSuccess: () => {
+        this.entryForm = null;
+        this.refreshEntryList();
+      },
+      onCancel: () => {
+        this.entryForm = null;
+      },
+    });
+  }
+
+  private async handleDeleteEntry(entry: Entry): Promise<void> {
+    const selectedDivision = this.divisions.find((d) => d.id === this.selectedDivisionId);
+
+    // Check if draw is generated
+    if (selectedDivision && (selectedDivision.drawStatus === 'in_progress' || selectedDivision.drawStatus === 'completed')) {
+      toast.error('Cannot remove entry: draw is in progress or completed');
+      return;
+    }
+
+    const entryName = this.getEntryDisplayName(entry);
+    const confirmed = await this.showConfirmation(
+      'Remove Entry',
+      `Are you sure you want to remove "${entryName}" from this division?`,
+      'Remove'
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`/api/divisions/${this.selectedDivisionId}/entries/${entry.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to remove entry');
+      }
+
+      toast.success('Entry removed successfully');
+      this.refreshEntryList();
+      // Update entry count
+      if (this.competition) {
+        this.competition.entryCount--;
+      }
+    } catch (error) {
+      console.error('Failed to remove entry:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to remove entry');
+    }
+  }
+
+  private getEntryDisplayName(entry: Entry): string {
+    if (entry.entryType === 'singles' && entry.player) {
+      return entry.player.name;
+    }
+    if (entry.entryType === 'doubles' && entry.team) {
+      if (entry.team.name) return entry.team.name;
+      const p1 = entry.team.player1?.name || 'Unknown';
+      const p2 = entry.team.player2?.name || 'Unknown';
+      return `${p1} / ${p2}`;
+    }
+    return 'Unknown Entry';
+  }
+
+  private refreshEntryList(): void {
+    this.entryList?.refresh();
   }
 
   private renderDrawTab(): string {
@@ -463,6 +742,8 @@ export class CompetitionDetail {
       // Initialize tab-specific components
       if (tab === 'divisions') {
         this.initDivisionList();
+      } else if (tab === 'entries') {
+        this.initEntriesTab();
       }
     }
   }
@@ -475,6 +756,14 @@ export class CompetitionDetail {
     if (this.divisionForm) {
       this.divisionForm.destroy();
       this.divisionForm = null;
+    }
+    if (this.entryList) {
+      this.entryList.destroy();
+      this.entryList = null;
+    }
+    if (this.entryForm) {
+      this.entryForm.destroy();
+      this.entryForm = null;
     }
   }
 
@@ -681,6 +970,7 @@ export class CompetitionDetail {
 
   destroy(): void {
     this.editForm?.destroy();
+    this.entryForm?.destroy();
     this.cleanupTabComponents();
     this.container.innerHTML = '';
   }
