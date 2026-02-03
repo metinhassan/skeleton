@@ -19,6 +19,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d",
+    "db:seed": "docker compose exec -T postgres psql -U skeleton -d skeleton_dev -f /docker-entrypoint-initdb.d/seed.sql",
     "db:logs": "docker compose logs -f postgres",
     "dev:postgres": "DB_TYPE=postgres npm run dev",
     "test:api": "./scripts/test-api.sh"

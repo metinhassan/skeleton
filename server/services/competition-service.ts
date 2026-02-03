@@ -40,6 +40,8 @@ export interface Competition {
   startDate: string | null;
   endDate: string | null;
   createdBy: string;
+  divisionCount: number;
+  entryCount: number;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -9,6 +9,7 @@ import { LiveScoring } from './components/live-scoring.js';
 import { PublicLiveScores } from './components/public-live-scores.js';
 import { PublicMatchView } from './components/public-match-view.js';
 import { BracketView } from './components/bracket-view.js';
+import { PublicRegistration } from './components/public-registration.js';
 import { AppShell } from './components/app-shell.js';
 import type { NavSection } from './components/side-nav.js';
 import { clubContext } from './lib/club-context.js';
@@ -39,7 +40,7 @@ interface LoginResponse {
   error?: string;
 }
 
-type ViewName = 'login' | 'register' | 'dashboard' | 'profile' | 'live-scoring' | 'public-live' | 'public-match' | 'bracket' | 'app-shell';
+type ViewName = 'login' | 'register' | 'dashboard' | 'profile' | 'live-scoring' | 'public-live' | 'public-match' | 'bracket' | 'public-registration' | 'app-shell';
 
 // Route parameter interface
 interface RouteParams {
@@ -62,6 +63,7 @@ class App {
   private publicLiveView: HTMLElement;
   private publicMatchView: HTMLElement;
   private bracketView: HTMLElement;
+  private publicRegistrationView: HTMLElement;
   private appShellContainer: HTMLElement;
 
   // App Shell
@@ -84,6 +86,7 @@ class App {
   private activePublicLive: PublicLiveScores | null = null;
   private activePublicMatch: PublicMatchView | null = null;
   private activeBracket: BracketView | null = null;
+  private activePublicRegistration: PublicRegistration | null = null;
   private activeCompetitionList: CompetitionList | null = null;
   private activeCompetitionDetail: CompetitionDetail | null = null;
   private activeCompetitionForm: CompetitionForm | null = null;
@@ -101,6 +104,7 @@ class App {
     this.publicLiveView = this.getElement('#public-live-view');
     this.publicMatchView = this.getElement('#public-match-view');
     this.bracketView = this.getElement('#bracket-view');
+    this.publicRegistrationView = this.getElement('#public-registration-view');
     this.appShellContainer = this.getElement('#app-shell-container');
 
     // Get dashboard content template
@@ -203,6 +207,10 @@ class App {
       this.showPublicMatch(params.matchId);
     } else if (params.route === 'bracket' && params.slug) {
       this.showBracket(params.slug);
+    } else if (params.route === 'public-registration' && params.slug) {
+      this.showPublicRegistration(params.slug);
+    } else if (params.route === 'account-register') {
+      this.showRegister();
     }
   }
 
@@ -232,6 +240,17 @@ class App {
     const bracketMatch = hash.match(/^\/competitions\/([^/]+)\/bracket$/);
     if (bracketMatch) {
       return { route: 'bracket', slug: bracketMatch[1] };
+    }
+
+    // Match: /competitions/:slug/register
+    const publicRegisterMatch = hash.match(/^\/competitions\/([^/]+)\/register$/);
+    if (publicRegisterMatch) {
+      return { route: 'public-registration', slug: publicRegisterMatch[1] };
+    }
+
+    // Match: /register (account registration)
+    if (hash === '/register') {
+      return { route: 'account-register' };
     }
 
     return null;
@@ -304,6 +323,15 @@ class App {
 
       if (data.user) {
         this.user = data.user;
+
+        // Check for return URL from registration flow
+        const returnUrl = sessionStorage.getItem('registration_return_url');
+        if (returnUrl) {
+          sessionStorage.removeItem('registration_return_url');
+          window.location.hash = returnUrl.replace(/^#/, '');
+          return;
+        }
+
         this.showDashboard();
       }
     } catch (error) {
@@ -362,6 +390,10 @@ class App {
       this.activeBracket.destroy();
       this.activeBracket = null;
     }
+    if (this.activePublicRegistration) {
+      this.activePublicRegistration.destroy();
+      this.activePublicRegistration = null;
+    }
     this.cleanupCompetitionComponents();
     this.cleanupPlayerComponents();
   }
@@ -419,6 +451,7 @@ class App {
     this.publicLiveView.hidden = view !== 'public-live';
     this.publicMatchView.hidden = view !== 'public-match';
     this.bracketView.hidden = view !== 'bracket';
+    this.publicRegistrationView.hidden = view !== 'public-registration';
     this.appShellContainer.hidden = view !== 'app-shell';
   }
 
@@ -436,6 +469,15 @@ class App {
       container: this.registerView,
       onSuccess: (user) => {
         this.user = user;
+
+        // Check for return URL from registration flow
+        const returnUrl = sessionStorage.getItem('registration_return_url');
+        if (returnUrl) {
+          sessionStorage.removeItem('registration_return_url');
+          window.location.hash = returnUrl.replace(/^#/, '');
+          return;
+        }
+
         this.showDashboard();
       },
       onSwitchToLogin: () => {
@@ -899,6 +941,23 @@ class App {
     this.activeBracket = new BracketView({
       container: this.bracketView,
       competitionSlug: slug,
+    });
+  }
+
+  /**
+   * Show public registration view (no auth required for viewing, auth for submitting)
+   */
+  private showPublicRegistration(slug: string): void {
+    this.showView('public-registration');
+
+    this.activePublicRegistration = new PublicRegistration({
+      container: this.publicRegistrationView,
+      competitionSlug: slug,
+      onLoginRequired: () => {
+        // Store return URL in sessionStorage for redirect after login
+        sessionStorage.setItem('registration_return_url', window.location.hash);
+        this.showLogin();
+      },
     });
   }
 }

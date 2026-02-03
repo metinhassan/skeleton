@@ -562,10 +562,17 @@ export class EntryList {
   }
 
   private async handleReject(entry: Entry): Promise<void> {
+    const entryName = this.getEntryName(entry);
+    const result = await this.showRejectModal(entryName);
+
+    if (!result.confirmed) return;
+
     try {
       const response = await fetch(`/api/entries/${entry.id}/reject`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        body: JSON.stringify({ reason: result.reason || undefined }),
       });
 
       if (!response.ok) {
@@ -687,6 +694,76 @@ export class EntryList {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  private showRejectModal(entryName: string): Promise<{ confirmed: boolean; reason?: string }> {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.innerHTML = `
+        <div class="modal" style="max-width: 400px;">
+          <div class="modal__header">
+            <h2 class="modal__title">Reject Entry</h2>
+            <button class="modal__close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal__body">
+            <p style="margin-bottom: 1rem;">Are you sure you want to reject <strong>${this.escapeHtml(entryName)}</strong>?</p>
+            <div class="form-row">
+              <label class="form-label" for="reject-reason">Reason (optional)</label>
+              <textarea
+                id="reject-reason"
+                class="form-input"
+                rows="3"
+                placeholder="Enter a reason for rejection..."
+              ></textarea>
+            </div>
+          </div>
+          <div class="modal__footer">
+            <button type="button" class="btn btn-outline" id="cancel-reject-btn">Cancel</button>
+            <button type="button" class="btn btn-danger" id="confirm-reject-btn">Reject Entry</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      requestAnimationFrame(() => {
+        overlay.classList.add('modal-overlay--visible');
+      });
+
+      const cleanup = () => {
+        overlay.classList.remove('modal-overlay--visible');
+        setTimeout(() => overlay.remove(), 200);
+      };
+
+      const closeBtn = overlay.querySelector('.modal__close');
+      const cancelBtn = overlay.querySelector('#cancel-reject-btn');
+      const confirmBtn = overlay.querySelector('#confirm-reject-btn');
+      const reasonInput = overlay.querySelector('#reject-reason') as HTMLTextAreaElement;
+
+      closeBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve({ confirmed: false });
+      });
+
+      cancelBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve({ confirmed: false });
+      });
+
+      confirmBtn?.addEventListener('click', () => {
+        const reason = reasonInput?.value.trim() || '';
+        cleanup();
+        resolve({ confirmed: true, reason });
+      });
+
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          cleanup();
+          resolve({ confirmed: false });
+        }
+      });
+    });
   }
 
   destroy(): void {

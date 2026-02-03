@@ -11,6 +11,7 @@ import { DivisionList } from './division-list.js';
 import { DivisionForm } from './division-form.js';
 import { EntryList } from './entry-list.js';
 import { EntryForm } from './entry-form.js';
+import { DrawManager } from './draw-manager.js';
 import { toast } from './toast.js';
 
 export type CompetitionTab = 'overview' | 'divisions' | 'entries' | 'draw' | 'settings';
@@ -38,9 +39,11 @@ export class CompetitionDetail {
   private divisionForm: DivisionForm | null = null;
   private entryList: EntryList | null = null;
   private entryForm: EntryForm | null = null;
+  private drawManager: DrawManager | null = null;
   private divisions: Division[] = [];
   private selectedDivisionId: string | null = null;
   private isLoadingDivisions = false;
+  private pendingEntriesCount = 0;
 
   constructor(options: CompetitionDetailOptions) {
     this.container = options.container;
@@ -132,10 +135,10 @@ export class CompetitionDetail {
   }
 
   private renderTabs(): string {
-    const tabs: { id: CompetitionTab; label: string }[] = [
+    const tabs: { id: CompetitionTab; label: string; badge?: number }[] = [
       { id: 'overview', label: 'Overview' },
       { id: 'divisions', label: 'Divisions' },
-      { id: 'entries', label: 'Entries' },
+      { id: 'entries', label: 'Entries', badge: this.pendingEntriesCount },
       { id: 'draw', label: 'Draw' },
       { id: 'settings', label: 'Settings' },
     ];
@@ -148,6 +151,7 @@ export class CompetitionDetail {
           <button class="tab${tab.id === this.currentTab ? ' tab--active' : ''}"
                   data-tab="${tab.id}">
             ${tab.label}
+            ${tab.badge && tab.badge > 0 ? `<span class="tab__badge">${tab.badge}</span>` : ''}
           </button>
         `
           )
@@ -496,8 +500,8 @@ export class CompetitionDetail {
       onAddEntry: () => this.showCreateEntry(),
       onEditEntry: (entry) => this.showEditEntry(entry),
       onDeleteEntry: (entry) => this.handleDeleteEntry(entry),
-      onApproveEntry: () => this.refreshEntryList(),
-      onRejectEntry: () => this.refreshEntryList(),
+      onApproveEntry: () => this.handleEntryStatusChange(),
+      onRejectEntry: () => this.handleEntryStatusChange(),
     });
   }
 
@@ -624,18 +628,53 @@ export class CompetitionDetail {
     this.entryList?.refresh();
   }
 
+  private async handleEntryStatusChange(): Promise<void> {
+    this.refreshEntryList();
+    // Update pending count and refresh tabs
+    await this.fetchPendingEntriesCount();
+    this.updateTabs();
+  }
+
+  private updateTabs(): void {
+    const tabsContainer = this.container.querySelector('.tabs');
+    if (tabsContainer) {
+      tabsContainer.outerHTML = this.renderTabs();
+      // Rebind tab click events
+      const tabs = this.container.querySelectorAll('.tab');
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          const tabId = tab.getAttribute('data-tab') as CompetitionTab;
+          if (tabId && tabId !== this.currentTab) {
+            this.switchTab(tabId);
+          }
+        });
+      });
+    }
+  }
+
   private renderDrawTab(): string {
     return `
       <div class="tab-content tab-content--active">
-        <div class="empty-state">
-          <div class="empty-state__icon">🏆</div>
-          <h3 class="empty-state__title">Draw</h3>
-          <p class="empty-state__description">
-            Draw generation and viewing will be available in Phase 7.
-          </p>
-        </div>
+        <div id="draw-manager-container"></div>
       </div>
     `;
+  }
+
+  private initDrawTab(): void {
+    if (!this.competition) return;
+
+    const container = this.container.querySelector('#draw-manager-container') as HTMLElement;
+    if (!container) return;
+
+    // Cleanup existing manager
+    if (this.drawManager) {
+      this.drawManager.destroy();
+    }
+
+    this.drawManager = new DrawManager({
+      container,
+      competitionId: this.competition.id,
+    });
   }
 
   private renderSettingsTab(): string {
@@ -744,6 +783,8 @@ export class CompetitionDetail {
         this.initDivisionList();
       } else if (tab === 'entries') {
         this.initEntriesTab();
+      } else if (tab === 'draw') {
+        this.initDrawTab();
       }
     }
   }
@@ -764,6 +805,10 @@ export class CompetitionDetail {
     if (this.entryForm) {
       this.entryForm.destroy();
       this.entryForm = null;
+    }
+    if (this.drawManager) {
+      this.drawManager.destroy();
+      this.drawManager = null;
     }
   }
 
@@ -811,12 +856,51 @@ export class CompetitionDetail {
 
       const data: CompetitionResponse = await response.json();
       this.competition = data.competition;
+
+      // Fetch pending entries count for the badge
+      await this.fetchPendingEntriesCount();
     } catch (error) {
       console.error('Failed to fetch competition:', error);
       this.competition = null;
     } finally {
       this.isLoading = false;
       this.render();
+    }
+  }
+
+  private async fetchPendingEntriesCount(): Promise<void> {
+    if (!this.competition) return;
+
+    try {
+      // Fetch divisions first to get all entry counts
+      const divResponse = await fetch(`/api/competitions/${this.competition.id}/divisions`, {
+        credentials: 'include',
+      });
+
+      if (!divResponse.ok) return;
+
+      const divData: DivisionListResponse = await divResponse.json();
+      const divisions = divData.divisions || [];
+
+      // Fetch entries for each division and count pending
+      let totalPending = 0;
+      for (const division of divisions) {
+        const entriesResponse = await fetch(`/api/divisions/${division.id}/entries`, {
+          credentials: 'include',
+        });
+
+        if (entriesResponse.ok) {
+          const entriesData: EntryListResponse = await entriesResponse.json();
+          const pendingCount = (entriesData.entries || []).filter(
+            (e) => e.status === 'pending'
+          ).length;
+          totalPending += pendingCount;
+        }
+      }
+
+      this.pendingEntriesCount = totalPending;
+    } catch (error) {
+      console.error('Failed to fetch pending entries count:', error);
     }
   }
 

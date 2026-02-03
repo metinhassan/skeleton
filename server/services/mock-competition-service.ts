@@ -114,23 +114,35 @@ export class MockCompetitionService implements CompetitionService {
   async getCompetition(competitionId: string): Promise<Competition | null> {
     const db = getDatabase();
     const row = db
-      .prepare('SELECT * FROM competitions WHERE id = ?')
-      .get(competitionId) as DbCompetition | undefined;
+      .prepare(`
+        SELECT c.*,
+               (SELECT COUNT(*) FROM divisions WHERE competition_id = c.id) as division_count,
+               (SELECT COUNT(*) FROM entries e JOIN divisions d ON e.division_id = d.id WHERE d.competition_id = c.id) as entry_count
+        FROM competitions c
+        WHERE c.id = ?
+      `)
+      .get(competitionId) as (DbCompetition & { division_count: number; entry_count: number }) | undefined;
 
     return row ? this.mapRowToCompetition(row) : null;
   }
 
   async getClubCompetitions(clubId: string, includeDrafts: boolean): Promise<Competition[]> {
     const db = getDatabase();
-    let query = 'SELECT * FROM competitions WHERE club_id = ?';
+    let query = `
+      SELECT c.*,
+             (SELECT COUNT(*) FROM divisions WHERE competition_id = c.id) as division_count,
+             (SELECT COUNT(*) FROM entries e JOIN divisions d ON e.division_id = d.id WHERE d.competition_id = c.id) as entry_count
+      FROM competitions c
+      WHERE c.club_id = ?
+    `;
 
     if (!includeDrafts) {
-      query += " AND status != 'draft'";
+      query += " AND c.status != 'draft'";
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY c.created_at DESC';
 
-    const rows = db.prepare(query).all(clubId) as DbCompetition[];
+    const rows = db.prepare(query).all(clubId) as (DbCompetition & { division_count: number; entry_count: number })[];
     return rows.map((row) => this.mapRowToCompetition(row));
   }
 
@@ -230,8 +242,14 @@ export class MockCompetitionService implements CompetitionService {
   async getPublicCompetition(slug: string): Promise<Competition | null> {
     const db = getDatabase();
     const row = db
-      .prepare("SELECT * FROM competitions WHERE public_slug = ? AND status != 'draft'")
-      .get(slug) as DbCompetition | undefined;
+      .prepare(`
+        SELECT c.*,
+               (SELECT COUNT(*) FROM divisions WHERE competition_id = c.id) as division_count,
+               (SELECT COUNT(*) FROM entries e JOIN divisions d ON e.division_id = d.id WHERE d.competition_id = c.id) as entry_count
+        FROM competitions c
+        WHERE c.public_slug = ? AND c.status != 'draft'
+      `)
+      .get(slug) as (DbCompetition & { division_count: number; entry_count: number }) | undefined;
 
     return row ? this.mapRowToCompetition(row) : null;
   }
@@ -430,7 +448,7 @@ export class MockCompetitionService implements CompetitionService {
     return `${base}-${suffix}`;
   }
 
-  private mapRowToCompetition(row: DbCompetition): Competition {
+  private mapRowToCompetition(row: DbCompetition & { division_count?: number; entry_count?: number }): Competition {
     return {
       id: row.id,
       clubId: row.club_id,
@@ -444,6 +462,8 @@ export class MockCompetitionService implements CompetitionService {
       startDate: row.start_date,
       endDate: row.end_date,
       createdBy: row.created_by,
+      divisionCount: row.division_count || 0,
+      entryCount: row.entry_count || 0,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

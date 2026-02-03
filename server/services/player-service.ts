@@ -221,7 +221,7 @@ export interface PlayerService {
   // Entries
   createEntry(divisionId: string, input: CreateEntryInput): Promise<PlayerResult<Entry>>;
   getEntry(entryId: string): Promise<Entry | null>;
-  getDivisionEntries(divisionId: string): Promise<Entry[]>;
+  getDivisionEntries(divisionId: string): Promise<EntryWithPlayer[]>;
   updateEntry(entryId: string, input: UpdateEntryInput): Promise<PlayerResult<Entry>>;
   deleteEntry(entryId: string): Promise<PlayerResult<void>>;
   checkPlayerInDivision(divisionId: string, playerId: string): Promise<boolean>;

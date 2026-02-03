@@ -115,8 +115,23 @@ export class PostgresCompetitionService implements CompetitionService {
   async getCompetition(competitionId: string): Promise<Competition | null> {
     await this.ensureInitialized();
     const pool = getPool();
-    const result = await pool.query<DbCompetition>(
-      'SELECT * FROM competitions WHERE id = $1',
+    const result = await pool.query<DbCompetition & { division_count: string; entry_count: string }>(
+      `SELECT c.*,
+              COALESCE(d.division_count, 0) as division_count,
+              COALESCE(e.entry_count, 0) as entry_count
+       FROM competitions c
+       LEFT JOIN (
+         SELECT competition_id, COUNT(*) as division_count
+         FROM divisions
+         GROUP BY competition_id
+       ) d ON d.competition_id = c.id
+       LEFT JOIN (
+         SELECT d.competition_id, COUNT(e.id) as entry_count
+         FROM divisions d
+         JOIN entries e ON e.division_id = d.id
+         GROUP BY d.competition_id
+       ) e ON e.competition_id = c.id
+       WHERE c.id = $1`,
       [competitionId]
     );
     return result.rows.length > 0 ? this.mapRowToCompetition(result.rows[0]) : null;
@@ -125,15 +140,32 @@ export class PostgresCompetitionService implements CompetitionService {
   async getClubCompetitions(clubId: string, includeDrafts: boolean): Promise<Competition[]> {
     await this.ensureInitialized();
     const pool = getPool();
-    let query = 'SELECT * FROM competitions WHERE club_id = $1';
+    let query = `
+      SELECT c.*,
+             COALESCE(d.division_count, 0) as division_count,
+             COALESCE(e.entry_count, 0) as entry_count
+      FROM competitions c
+      LEFT JOIN (
+        SELECT competition_id, COUNT(*) as division_count
+        FROM divisions
+        GROUP BY competition_id
+      ) d ON d.competition_id = c.id
+      LEFT JOIN (
+        SELECT d.competition_id, COUNT(e.id) as entry_count
+        FROM divisions d
+        JOIN entries e ON e.division_id = d.id
+        GROUP BY d.competition_id
+      ) e ON e.competition_id = c.id
+      WHERE c.club_id = $1
+    `;
 
     if (!includeDrafts) {
-      query += " AND status != 'draft'";
+      query += " AND c.status != 'draft'";
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY c.created_at DESC';
 
-    const result = await pool.query<DbCompetition>(query, [clubId]);
+    const result = await pool.query<DbCompetition & { division_count: string; entry_count: string }>(query, [clubId]);
     return result.rows.map((row) => this.mapRowToCompetition(row));
   }
 
@@ -232,8 +264,23 @@ export class PostgresCompetitionService implements CompetitionService {
   async getPublicCompetition(slug: string): Promise<Competition | null> {
     await this.ensureInitialized();
     const pool = getPool();
-    const result = await pool.query<DbCompetition>(
-      "SELECT * FROM competitions WHERE public_slug = $1 AND status != 'draft'",
+    const result = await pool.query<DbCompetition & { division_count: string; entry_count: string }>(
+      `SELECT c.*,
+              COALESCE(d.division_count, 0) as division_count,
+              COALESCE(e.entry_count, 0) as entry_count
+       FROM competitions c
+       LEFT JOIN (
+         SELECT competition_id, COUNT(*) as division_count
+         FROM divisions
+         GROUP BY competition_id
+       ) d ON d.competition_id = c.id
+       LEFT JOIN (
+         SELECT d.competition_id, COUNT(e.id) as entry_count
+         FROM divisions d
+         JOIN entries e ON e.division_id = d.id
+         GROUP BY d.competition_id
+       ) e ON e.competition_id = c.id
+       WHERE c.public_slug = $1 AND c.status != 'draft'`,
       [slug]
     );
     return result.rows.length > 0 ? this.mapRowToCompetition(result.rows[0]) : null;
@@ -425,7 +472,7 @@ export class PostgresCompetitionService implements CompetitionService {
     return `${base}-${suffix}`;
   }
 
-  private mapRowToCompetition(row: DbCompetition): Competition {
+  private mapRowToCompetition(row: DbCompetition & { division_count?: string; entry_count?: string }): Competition {
     return {
       id: row.id,
       clubId: row.club_id,
@@ -439,6 +486,8 @@ export class PostgresCompetitionService implements CompetitionService {
       startDate: row.start_date,
       endDate: row.end_date,
       createdBy: row.created_by,
+      divisionCount: parseInt(row.division_count || '0', 10),
+      entryCount: parseInt(row.entry_count || '0', 10),
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

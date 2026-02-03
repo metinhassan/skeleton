@@ -3633,6 +3633,113 @@ async function seedDemoUsers() {
 }
 
 /**
+ * Seed demo players for a club
+ */
+async function seedDemoPlayers(clubId: string) {
+  const playerService = getPlayerService();
+
+  // Check if players already exist
+  const existingPlayers = await playerService.getPlayers(clubId);
+  if (existingPlayers.length > 0) {
+    return existingPlayers;
+  }
+
+  const playerNames = [
+    'John Smith', 'Emma Wilson', 'Michael Chen', 'Sophie Anderson',
+    'David Lee', 'Jessica Taylor', 'Ryan Martinez', 'Olivia Brown',
+    'James Johnson', 'Ava Williams', 'Ethan Davis', 'Mia Garcia',
+    'Noah Miller', 'Isabella Moore', 'Liam Jackson', 'Charlotte White'
+  ];
+
+  const players = [];
+  for (const name of playerNames) {
+    const email = name.toLowerCase().replace(' ', '.') + '@example.com';
+    const result = await playerService.createPlayer(clubId, { name, email });
+    if (result) {
+      players.push(result);
+    }
+  }
+
+  return players;
+}
+
+/**
+ * Seed demo competition with divisions and entries
+ */
+async function seedDemoCompetition(clubId: string, creatorId: string) {
+  const competitionService = getCompetitionService();
+  const playerService = getPlayerService();
+
+  // Check if competitions already exist
+  const existingComps = await competitionService.getClubCompetitions(clubId, true);
+  if (existingComps.length > 0) {
+    return;
+  }
+
+  // Seed players first
+  const players = await seedDemoPlayers(clubId);
+  if (players.length < 8) {
+    console.log('Not enough players seeded, skipping competition seed');
+    return;
+  }
+
+  // Create a tournament
+  const comp = await competitionService.createCompetition(clubId, {
+    name: 'Summer Championship 2026',
+    type: 'tournament',
+    format: 'knockout',
+    registrationMode: 'organizer_only',
+    requiresApproval: false,
+    scoreEntryMode: 'organisers_only',
+    startDate: '2026-02-01',
+    endDate: '2026-02-15',
+  }, creatorId);
+
+  if (!comp) {
+    console.error('Failed to create demo competition');
+    return;
+  }
+
+  // Create divisions
+  const singlesDiv = await competitionService.createDivision(comp.id, {
+    name: 'Men\'s Singles',
+    format: 'knockout',
+  });
+
+  const doublesDiv = await competitionService.createDivision(comp.id, {
+    name: 'Women\'s Singles',
+    format: 'knockout',
+  });
+
+  // Add entries to singles division (8 players)
+  if (singlesDiv) {
+    for (let i = 0; i < 8 && i < players.length; i++) {
+      await playerService.createEntry(singlesDiv.id, {
+        entryType: 'singles',
+        playerId: players[i].id,
+        seed: i < 4 ? i + 1 : undefined, // Seed top 4
+      });
+    }
+  }
+
+  // Add entries to women's singles (6 players - to test byes)
+  if (doublesDiv) {
+    for (let i = 8; i < 14 && i < players.length; i++) {
+      await playerService.createEntry(doublesDiv.id, {
+        entryType: 'singles',
+        playerId: players[i].id,
+        seed: i < 10 ? i - 7 : undefined,
+      });
+    }
+  }
+
+  // Publish the competition
+  await competitionService.publishCompetition(comp.id);
+
+  console.log(`   - ${comp.name} (with ${singlesDiv ? '8' : '0'} + ${doublesDiv ? '6' : '0'} entries)`);
+}
+
+/**
  * Seed demo clubs for demo users if they don't have any
  */
 async function seedDemoClubs() {
@@ -3715,6 +3822,18 @@ async function startServer() {
       // Seed demo users and clubs if they don't exist
       await seedDemoUsers();
       await seedDemoClubs();
+
+      // Seed demo competition with players and entries
+      const userService = getUserService();
+      const clubService = getClubService();
+      const adminUser = await userService.findByEmail('admin@example.com');
+      if (adminUser) {
+        const adminClubs = await clubService.getUserClubs(adminUser.id);
+        if (adminClubs.length > 0) {
+          console.log('\n🎾 Seeding demo data:');
+          await seedDemoCompetition(adminClubs[0].clubId, adminUser.id);
+        }
+      }
 
       console.log('\n🔐 Dev server running with HTTPS');
       console.log(`   https://localhost:${HTTPS_PORT}\n`);

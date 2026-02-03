@@ -529,13 +529,64 @@ export class PostgresPlayerService implements PlayerService {
     return result.rows.length > 0 ? this.mapRowToEntry(result.rows[0]) : null;
   }
 
-  async getDivisionEntries(divisionId: string): Promise<Entry[]> {
+  async getDivisionEntries(divisionId: string): Promise<EntryWithPlayer[]> {
     const pool = getPool();
-    const result = await pool.query<DbEntry>(
-      'SELECT * FROM entries WHERE division_id = $1 ORDER BY seed NULLS LAST, created_at',
+    const result = await pool.query<DbEntry & {
+      player_name: string | null;
+      player_email: string | null;
+      player_phone: string | null;
+      team_name: string | null;
+      team_player1_id: string | null;
+      team_player2_id: string | null;
+      team_player1_name: string | null;
+      team_player2_name: string | null;
+    }>(
+      `SELECT e.*,
+              p.name as player_name, p.email as player_email, p.phone as player_phone,
+              t.name as team_name, t.player1_id as team_player1_id, t.player2_id as team_player2_id,
+              p1.name as team_player1_name, p2.name as team_player2_name
+       FROM entries e
+       LEFT JOIN players p ON e.player_id = p.id
+       LEFT JOIN teams t ON e.team_id = t.id
+       LEFT JOIN players p1 ON t.player1_id = p1.id
+       LEFT JOIN players p2 ON t.player2_id = p2.id
+       WHERE e.division_id = $1
+       ORDER BY e.seed NULLS LAST, e.created_at`,
       [divisionId]
     );
-    return result.rows.map((row) => this.mapRowToEntry(row));
+    return result.rows.map((row) => ({
+      ...this.mapRowToEntry(row),
+      player: row.player_id
+        ? {
+            id: row.player_id,
+            clubId: '',
+            userId: null,
+            name: row.player_name || 'Unknown',
+            email: row.player_email,
+            phone: row.player_phone,
+            claimToken: null,
+            claimTokenExpiresAt: null,
+            claimedAt: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }
+        : undefined,
+      team: row.team_id
+        ? {
+            id: row.team_id,
+            clubId: '',
+            name: row.team_name || `${row.team_player1_name || 'Unknown'} / ${row.team_player2_name || 'Unknown'}`,
+            player1Id: row.team_player1_id || '',
+            player2Id: row.team_player2_id || '',
+            player1: row.team_player1_id ? { id: row.team_player1_id, clubId: '', userId: null, name: row.team_player1_name || 'Unknown', email: null, phone: null, claimToken: null, claimTokenExpiresAt: null, claimedAt: null, createdAt: new Date(), updatedAt: new Date() } : undefined,
+            player2: row.team_player2_id ? { id: row.team_player2_id, clubId: '', userId: null, name: row.team_player2_name || 'Unknown', email: null, phone: null, claimToken: null, claimTokenExpiresAt: null, claimedAt: null, createdAt: new Date(), updatedAt: new Date() } : undefined,
+            seed: null,
+            rating: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }
+        : undefined,
+    }));
   }
 
   async updateEntry(entryId: string, input: UpdateEntryInput): Promise<PlayerResult<Entry>> {
