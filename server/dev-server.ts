@@ -99,6 +99,88 @@ interface ClubRequest extends AuthenticatedRequest {
 }
 
 /**
+ * Transform backend Match to frontend Match format
+ */
+function transformMatchForFrontend(match: any): any {
+  // Calculate scores from SetScore array
+  let entry1Score: number | null = null;
+  let entry2Score: number | null = null;
+
+  if (match.score && Array.isArray(match.score)) {
+    entry1Score = 0;
+    entry2Score = 0;
+    for (const set of match.score) {
+      // SetScore is [entry1Games, entry2Games] or [entry1Games, entry2Games, [tb1, tb2]]
+      entry1Score += set[0];
+      entry2Score += set[1];
+    }
+  }
+
+  // Map 'pending' status to 'not_started' for frontend
+  let status = match.status;
+  if (status === 'pending') {
+    status = 'not_started';
+  }
+
+  return {
+    id: match.id,
+    drawId: match.drawId,
+    roundNumber: match.roundNumber,
+    matchNumber: match.matchNumber,
+    entry1Id: match.entry1Id,
+    entry2Id: match.entry2Id,
+    winnerId: match.winnerEntryId || null,
+    entry1Score,
+    entry2Score,
+    status,
+    scheduledTime: match.scheduledTime,
+    court: match.court,
+    nextMatchId: null, // Not directly mapped
+    createdAt: match.createdAt,
+    updatedAt: match.updatedAt,
+    // Populated fields
+    entry1Name: match.entry1Name,
+    entry2Name: match.entry2Name,
+    winnerName: match.winnerName,
+  };
+}
+
+/**
+ * Transform backend Standing to frontend Standing format
+ */
+function transformStandingForFrontend(standing: any): any {
+  return {
+    entryId: standing.entryId,
+    entryName: standing.entryName || 'Unknown',
+    position: standing.position || 0,
+    played: standing.wins + standing.losses,
+    won: standing.wins,
+    lost: standing.losses,
+    pointsFor: standing.gamesWon,
+    pointsAgainst: standing.gamesLost,
+    pointsDiff: standing.gamesWon - standing.gamesLost,
+  };
+}
+
+/**
+ * Transform backend Draw to frontend Draw format
+ */
+function transformDrawForFrontend(draw: any): any {
+  return {
+    id: draw.id,
+    divisionId: draw.divisionId,
+    drawType: draw.drawType,
+    status: draw.status,
+    bracketSize: draw.config?.bracketSize || null,
+    totalRounds: draw.config?.bracketSize ? Math.log2(draw.config.bracketSize) : null,
+    byeCount: null,
+    createdAt: draw.createdAt,
+    updatedAt: draw.updatedAt,
+    matches: draw.matches ? draw.matches.map(transformMatchForFrontend) : [],
+  };
+}
+
+/**
  * Middleware: Require authentication
  * Adds user info to req.user if authenticated
  */
@@ -2390,7 +2472,9 @@ app.post('/api/divisions/:divisionId/draws', requireAuth as any, requireDivision
       return;
     }
 
-    res.status(201).json({ success: true, draw: result.data });
+    // Get the full draw with matches for the response
+    const drawWithMatches = await drawService.getDrawWithMatches(result.data.id);
+    res.status(201).json({ success: true, draw: drawWithMatches ? transformDrawForFrontend(drawWithMatches) : result.data });
   } catch (error) {
     console.error('Create draw error:', error);
     res.status(500).json({ error: 'Failed to create draw' });
@@ -2425,7 +2509,7 @@ app.get('/api/draws/:drawId', requireAuth as any, requireDrawAccess as any, asyn
       return;
     }
 
-    res.json({ draw });
+    res.json({ draw: transformDrawForFrontend(draw) });
   } catch (error) {
     console.error('Get draw error:', error);
     res.status(500).json({ error: 'Failed to get draw' });
@@ -2453,7 +2537,9 @@ app.put('/api/draws/:drawId/activate', requireAuth as any, requireDrawOrganiser 
       console.error('Failed to queue draw published notification:', notifError);
     }
 
-    res.json({ success: true, draw: result.data });
+    // Get the full draw with matches for the response
+    const drawWithMatches = await drawService.getDrawWithMatches(req.drawId!);
+    res.json({ success: true, draw: drawWithMatches ? transformDrawForFrontend(drawWithMatches) : result.data });
   } catch (error) {
     console.error('Activate draw error:', error);
     res.status(500).json({ error: 'Failed to activate draw' });
@@ -2633,7 +2719,7 @@ app.get('/api/draws/:drawId/standings', requireAuth as any, requireDrawAccess as
   try {
     const drawService = getDrawService();
     const standings = await drawService.getStandings(req.drawId!);
-    res.json({ standings });
+    res.json({ standings: standings.map(transformStandingForFrontend) });
   } catch (error) {
     console.error('Get standings error:', error);
     res.status(500).json({ error: 'Failed to get standings' });
@@ -2710,10 +2796,11 @@ app.get('/api/public/draws/:drawId', async (req: Request, res: Response) => {
     // Include standings for round robin
     let standings = null;
     if (draw.drawType === 'round_robin') {
-      standings = await drawService.getStandings(drawId);
+      const rawStandings = await drawService.getStandings(drawId);
+      standings = rawStandings.map(transformStandingForFrontend);
     }
 
-    res.json({ draw, standings });
+    res.json({ draw: transformDrawForFrontend(draw), standings });
   } catch (error) {
     console.error('Get public draw error:', error);
     res.status(500).json({ error: 'Failed to get draw' });

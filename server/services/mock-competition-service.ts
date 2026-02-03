@@ -302,8 +302,25 @@ export class MockCompetitionService implements CompetitionService {
   async getDivisions(competitionId: string): Promise<Division[]> {
     const db = getDatabase();
     const rows = db
-      .prepare('SELECT * FROM divisions WHERE competition_id = ? ORDER BY sort_order, name')
-      .all(competitionId) as DbDivision[];
+      .prepare(`
+        SELECT d.*,
+               COALESCE(e.entry_count, 0) as entry_count,
+               dr.status as draw_status
+        FROM divisions d
+        LEFT JOIN (
+          SELECT division_id, COUNT(*) as entry_count
+          FROM entries
+          GROUP BY division_id
+        ) e ON e.division_id = d.id
+        LEFT JOIN (
+          SELECT division_id, status,
+                 ROW_NUMBER() OVER (PARTITION BY division_id ORDER BY created_at DESC) as rn
+          FROM draws
+        ) dr ON dr.division_id = d.id AND dr.rn = 1
+        WHERE d.competition_id = ?
+        ORDER BY d.sort_order, d.name
+      `)
+      .all(competitionId) as (DbDivision & { entry_count: number; draw_status: string | null })[];
 
     return rows.map((row) => this.mapRowToDivision(row));
   }
@@ -311,8 +328,24 @@ export class MockCompetitionService implements CompetitionService {
   async getDivision(divisionId: string): Promise<Division | null> {
     const db = getDatabase();
     const row = db
-      .prepare('SELECT * FROM divisions WHERE id = ?')
-      .get(divisionId) as DbDivision | undefined;
+      .prepare(`
+        SELECT d.*,
+               COALESCE(e.entry_count, 0) as entry_count,
+               dr.status as draw_status
+        FROM divisions d
+        LEFT JOIN (
+          SELECT division_id, COUNT(*) as entry_count
+          FROM entries
+          GROUP BY division_id
+        ) e ON e.division_id = d.id
+        LEFT JOIN (
+          SELECT division_id, status,
+                 ROW_NUMBER() OVER (PARTITION BY division_id ORDER BY created_at DESC) as rn
+          FROM draws
+        ) dr ON dr.division_id = d.id AND dr.rn = 1
+        WHERE d.id = ?
+      `)
+      .get(divisionId) as (DbDivision & { entry_count: number; draw_status: string | null }) | undefined;
 
     return row ? this.mapRowToDivision(row) : null;
   }
@@ -469,7 +502,17 @@ export class MockCompetitionService implements CompetitionService {
     };
   }
 
-  private mapRowToDivision(row: DbDivision): Division {
+  private mapRowToDivision(row: DbDivision & { entry_count?: number; draw_status?: string | null }): Division {
+    // Map draw status from 'draft'/'active'/'completed' to frontend DrawStatus
+    let drawStatus: 'not_generated' | 'generated' | 'in_progress' | 'completed' = 'not_generated';
+    if (row.draw_status === 'draft') {
+      drawStatus = 'generated';
+    } else if (row.draw_status === 'active') {
+      drawStatus = 'in_progress';
+    } else if (row.draw_status === 'completed') {
+      drawStatus = 'completed';
+    }
+
     return {
       id: row.id,
       competitionId: row.competition_id,
@@ -477,6 +520,8 @@ export class MockCompetitionService implements CompetitionService {
       format: row.format,
       scoringRuleId: row.scoring_rule_id,
       sortOrder: row.sort_order,
+      entryCount: row.entry_count || 0,
+      drawStatus,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

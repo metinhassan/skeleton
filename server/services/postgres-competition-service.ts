@@ -328,8 +328,21 @@ export class PostgresCompetitionService implements CompetitionService {
   async getDivisions(competitionId: string): Promise<Division[]> {
     await this.ensureInitialized();
     const pool = getPool();
-    const result = await pool.query<DbDivision>(
-      'SELECT * FROM divisions WHERE competition_id = $1 ORDER BY sort_order, name',
+    const result = await pool.query<DbDivision & { entry_count: string; draw_status: string | null }>(
+      `SELECT d.*,
+              COALESCE(e.entry_count, 0) as entry_count,
+              dr.status as draw_status
+       FROM divisions d
+       LEFT JOIN (
+         SELECT division_id, COUNT(*) as entry_count
+         FROM entries
+         GROUP BY division_id
+       ) e ON e.division_id = d.id
+       LEFT JOIN LATERAL (
+         SELECT status FROM draws WHERE division_id = d.id ORDER BY created_at DESC LIMIT 1
+       ) dr ON true
+       WHERE d.competition_id = $1
+       ORDER BY d.sort_order, d.name`,
       [competitionId]
     );
     return result.rows.map((row) => this.mapRowToDivision(row));
@@ -338,8 +351,20 @@ export class PostgresCompetitionService implements CompetitionService {
   async getDivision(divisionId: string): Promise<Division | null> {
     await this.ensureInitialized();
     const pool = getPool();
-    const result = await pool.query<DbDivision>(
-      'SELECT * FROM divisions WHERE id = $1',
+    const result = await pool.query<DbDivision & { entry_count: string; draw_status: string | null }>(
+      `SELECT d.*,
+              COALESCE(e.entry_count, 0) as entry_count,
+              dr.status as draw_status
+       FROM divisions d
+       LEFT JOIN (
+         SELECT division_id, COUNT(*) as entry_count
+         FROM entries
+         GROUP BY division_id
+       ) e ON e.division_id = d.id
+       LEFT JOIN LATERAL (
+         SELECT status FROM draws WHERE division_id = d.id ORDER BY created_at DESC LIMIT 1
+       ) dr ON true
+       WHERE d.id = $1`,
       [divisionId]
     );
     return result.rows.length > 0 ? this.mapRowToDivision(result.rows[0]) : null;
@@ -493,7 +518,17 @@ export class PostgresCompetitionService implements CompetitionService {
     };
   }
 
-  private mapRowToDivision(row: DbDivision): Division {
+  private mapRowToDivision(row: DbDivision & { entry_count?: string; draw_status?: string | null }): Division {
+    // Map draw status from 'draft'/'active'/'completed' to frontend DrawStatus
+    let drawStatus: 'not_generated' | 'generated' | 'in_progress' | 'completed' = 'not_generated';
+    if (row.draw_status === 'draft') {
+      drawStatus = 'generated';
+    } else if (row.draw_status === 'active') {
+      drawStatus = 'in_progress';
+    } else if (row.draw_status === 'completed') {
+      drawStatus = 'completed';
+    }
+
     return {
       id: row.id,
       competitionId: row.competition_id,
@@ -501,6 +536,8 @@ export class PostgresCompetitionService implements CompetitionService {
       format: row.format,
       scoringRuleId: row.scoring_rule_id,
       sortOrder: row.sort_order,
+      entryCount: parseInt(row.entry_count || '0', 10),
+      drawStatus,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

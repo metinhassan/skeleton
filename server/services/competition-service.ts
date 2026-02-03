@@ -46,6 +46,8 @@ export interface Competition {
   updatedAt: Date;
 }
 
+export type DivisionDrawStatus = 'not_generated' | 'generated' | 'in_progress' | 'completed';
+
 export interface Division {
   id: string;
   competitionId: string;
@@ -53,6 +55,8 @@ export interface Division {
   format: CompetitionFormat | null;
   scoringRuleId: string | null;
   sortOrder: number;
+  entryCount: number;
+  drawStatus: DivisionDrawStatus;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -374,7 +374,7 @@ export class PostgresDrawService implements DrawService {
     const draw = await this.getDraw(drawId);
     if (!draw) return null;
 
-    const matches = await this.getDrawMatches(drawId);
+    const matches = await this.getDrawMatchesWithNames(drawId);
     return { ...draw, matches };
   }
 
@@ -441,6 +441,37 @@ export class PostgresDrawService implements DrawService {
       [drawId]
     );
     return result.rows.map(row => this.mapRowToMatch(row));
+  }
+
+  async getDrawMatchesWithNames(drawId: string): Promise<(Match & { entry1Name?: string; entry2Name?: string; winnerName?: string })[]> {
+    const pool = getPool();
+
+    // Get matches with entry names via joins
+    const result = await pool.query<DbMatch & { entry1_name?: string; entry2_name?: string; winner_name?: string }>(`
+      SELECT m.*,
+             COALESCE(p1.name, t1.name) as entry1_name,
+             COALESCE(p2.name, t2.name) as entry2_name,
+             COALESCE(pw.name, tw.name) as winner_name
+      FROM matches m
+      LEFT JOIN entries e1 ON e1.id = m.entry1_id
+      LEFT JOIN players p1 ON p1.id = e1.player_id
+      LEFT JOIN teams t1 ON t1.id = e1.team_id
+      LEFT JOIN entries e2 ON e2.id = m.entry2_id
+      LEFT JOIN players p2 ON p2.id = e2.player_id
+      LEFT JOIN teams t2 ON t2.id = e2.team_id
+      LEFT JOIN entries ew ON ew.id = m.winner_entry_id
+      LEFT JOIN players pw ON pw.id = ew.player_id
+      LEFT JOIN teams tw ON tw.id = ew.team_id
+      WHERE m.draw_id = $1
+      ORDER BY m.round_number, m.match_number
+    `, [drawId]);
+
+    return result.rows.map(row => ({
+      ...this.mapRowToMatch(row),
+      entry1Name: row.entry1_name || undefined,
+      entry2Name: row.entry2_name || undefined,
+      winnerName: row.winner_name || undefined,
+    }));
   }
 
   async updateMatch(matchId: string, input: UpdateMatchInput): Promise<DrawResult<Match>> {
@@ -601,12 +632,20 @@ export class PostgresDrawService implements DrawService {
 
   async getStandings(drawId: string): Promise<Standing[]> {
     const pool = getPool();
-    const result = await pool.query<DbStanding>(`
-      SELECT * FROM standings
-      WHERE draw_id = $1
-      ORDER BY position NULLS LAST, points DESC, (games_won - games_lost) DESC
+    const result = await pool.query<DbStanding & { entry_name?: string }>(`
+      SELECT s.*,
+             COALESCE(p.name, t.name) as entry_name
+      FROM standings s
+      LEFT JOIN entries e ON e.id = s.entry_id
+      LEFT JOIN players p ON p.id = e.player_id
+      LEFT JOIN teams t ON t.id = e.team_id
+      WHERE s.draw_id = $1
+      ORDER BY s.position NULLS LAST, s.points DESC, (s.games_won - s.games_lost) DESC
     `, [drawId]);
-    return result.rows.map(row => this.mapRowToStanding(row));
+    return result.rows.map(row => ({
+      ...this.mapRowToStanding(row),
+      entryName: row.entry_name || 'Unknown',
+    }));
   }
 
   async recalculateStandings(drawId: string): Promise<void> {
