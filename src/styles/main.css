@@ -8,17 +8,26 @@
 }
 
 :root {
-  --color-primary: #3b82f6;
-  --color-primary-hover: #2563eb;
-  --color-secondary: #64748b;
-  --color-secondary-hover: #475569;
-  --color-error: #ef4444;
-  --color-success: #22c55e;
-  --color-bg: #f8fafc;
+  /* Primary - AO Blue */
+  --color-primary: #0078D4;
+  --color-primary-hover: #005a9e;
+  /* Accent - Tennis Ball Chartreuse */
+  --color-accent: #c4d600;
+  --color-accent-hover: #a8b800;
+  /* Secondary - Cool Gray */
+  --color-secondary: #475569;
+  --color-secondary-hover: #334155;
+  /* Status */
+  --color-error: #dc2626;
+  --color-success: #16a34a;
+  /* Background & Surface */
+  --color-bg: #f0f4f8;
   --color-card: #ffffff;
-  --color-text: #1e293b;
+  /* Text */
+  --color-text: #0f172a;
   --color-text-muted: #64748b;
-  --color-border: #e2e8f0;
+  --color-border: #d1d9e0;
+  /* Shadows & Radius */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
@@ -28,7 +37,7 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background-color: var(--color-bg);
   color: var(--color-text);
   line-height: 1.6;
@@ -54,7 +63,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0078D4 0%, #001f3f 100%);
 }
 
 .login-card {
@@ -298,7 +307,7 @@ body {
   align-items: flex-start;
   justify-content: center;
   padding: 2rem 1rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0078D4 0%, #001f3f 100%);
 }
 
 .profile-card {
@@ -376,8 +385,8 @@ body {
 :root {
   --color-danger: #dc2626;
   --color-danger-hover: #b91c1c;
-  --color-warning: #f59e0b;
-  --color-live: #22c55e;
+  --color-warning: #d97706;
+  --color-live: #c4d600;
 }
 
 /* Danger button */
@@ -399,7 +408,7 @@ body {
 /* Live Scoring Container */
 .live-scoring-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+  background: linear-gradient(135deg, #001f3f 0%, #000a14 100%);
   padding: 1rem;
   display: flex;
   flex-direction: column;
@@ -724,21 +733,21 @@ body {
 }
 
 .btn-point-1 {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: linear-gradient(135deg, #0078D4 0%, #005a9e 100%);
   color: white;
 }
 
 .btn-point-1:hover:not(:disabled) {
-  box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 8px 25px rgba(0, 120, 212, 0.4);
 }
 
 .btn-point-2 {
-  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-  color: white;
+  background: linear-gradient(135deg, #c4d600 0%, #a8b800 100%);
+  color: #0f172a;
 }
 
 .btn-point-2:hover:not(:disabled) {
-  box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 8px 25px rgba(196, 214, 0, 0.4);
 }
 
 .point-btn-text {
@@ -969,7 +978,7 @@ body {
 .public-header {
   text-align: center;
   padding: 2rem 1rem;
-  background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+  background: linear-gradient(135deg, #001f3f 0%, #000a14 100%);
   color: white;
   margin: -1rem -1rem 1rem -1rem;
 }
@@ -1331,11 +1340,11 @@ body {
   --sidebar-collapsed-width: 64px;
   --header-height: 64px;
   --mobile-header-height: 56px;
-  --sidebar-bg: #1e293b;
-  --sidebar-text: #e2e8f0;
+  --sidebar-bg: #0f2942;
+  --sidebar-text: #f1f5f9;
   --sidebar-text-muted: #94a3b8;
-  --sidebar-hover: #334155;
-  --sidebar-active: #3b82f6;
+  --sidebar-hover: #1a3a5c;
+  --sidebar-active: #c4d600;
 }
 
 /* App Shell Layout */
@@ -1721,8 +1730,8 @@ body {
 }
 
 .role-badge--player {
-  background: #f3e8ff;
-  color: #7c3aed;
+  background: #e0f2fe;
+  color: #0078D4;
 }
 
 /* Mobile Overlay */
@@ -2039,8 +2048,8 @@ body {
 }
 
 .status-badge--completed {
-  background: #f3e8ff;
-  color: #7c3aed;
+  background: #e0f2fe;
+  color: #0078D4;
 }
 
 .status-badge--cancelled {
@@ -2677,8 +2686,8 @@ body {
 }
 
 .draw-status-badge--completed {
-  background: #f3e8ff;
-  color: #7c3aed;
+  background: #e0f2fe;
+  color: #0078D4;
 }
 
 /* Division Empty State */
@@ -3624,7 +3633,7 @@ body {
 
 /* Registration Header */
 .registration-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0078D4 0%, #001f3f 100%);
   color: white;
   text-align: center;
   padding: 3rem 1.5rem;

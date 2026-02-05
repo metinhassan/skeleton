@@ -1149,7 +1149,7 @@ app.get('/api/competitions/:competitionId', requireAuth as any, requireCompetiti
 /**
  * GET /api/clubs/:clubId/competitions/by-slug/:slug - Get competition details by slug
  */
-app.get('/api/clubs/:clubId/competitions/by-slug/:slug', requireAuth as any, requireMembership as any, async (req: AuthRequest & { membership?: any }, res: Response) => {
+app.get('/api/clubs/:clubId/competitions/by-slug/:slug', requireAuth as any, requireClubMember as any, async (req: ClubRequest, res: Response) => {
   try {
     const { clubId, slug } = req.params;
     const competitionService = getCompetitionService();

@@ -23,8 +23,7 @@ This uses the PostgreSQL database with comprehensive seed data including:
 
 ## URLs
 
-- Frontend: http://localhost:5173/
-- API Server: https://localhost:3000
+- Dev Server: http://localhost:3000/ (serves both frontend and API)
 
 ## Database
 
