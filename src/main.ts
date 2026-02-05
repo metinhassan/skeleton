@@ -178,7 +178,15 @@ class App {
    * Check if a route is public (no auth required)
    */
   private isPublicRoute(hash: string): boolean {
-    return hash.startsWith('/live/') || hash.startsWith('/competitions/');
+    // Public live scoring routes
+    if (hash.startsWith('/live/')) {
+      return true;
+    }
+    // Public competition routes (bracket, register) - these have a slug, not UUID
+    if (hash.match(/^\/competitions\/[^/]+\/(bracket|register)$/)) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -211,6 +219,16 @@ class App {
       this.showPublicRegistration(params.slug);
     } else if (params.route === 'account-register') {
       this.showRegister();
+    } else if (params.route === 'dashboard') {
+      this.showDashboard();
+    } else if (params.route === 'competitions') {
+      this.showAppShellSection('competitions');
+    } else if (params.route === 'competition-detail' && params.slug) {
+      this.showAppShellSection('competitions', params.slug);
+    } else if (params.route === 'players') {
+      this.showAppShellSection('players');
+    } else if (params.route === 'clubs') {
+      this.showAppShellSection('clubs');
     }
   }
 
@@ -236,13 +254,13 @@ class App {
       return { route: 'public-match', matchId: publicMatchMatch[1] };
     }
 
-    // Match: /competitions/:slug/bracket
+    // Match: /competitions/:slug/bracket (public bracket view)
     const bracketMatch = hash.match(/^\/competitions\/([^/]+)\/bracket$/);
     if (bracketMatch) {
       return { route: 'bracket', slug: bracketMatch[1] };
     }
 
-    // Match: /competitions/:slug/register
+    // Match: /competitions/:slug/register (public registration)
     const publicRegisterMatch = hash.match(/^\/competitions\/([^/]+)\/register$/);
     if (publicRegisterMatch) {
       return { route: 'public-registration', slug: publicRegisterMatch[1] };
@@ -251,6 +269,35 @@ class App {
     // Match: /register (account registration)
     if (hash === '/register') {
       return { route: 'account-register' };
+    }
+
+    // === Internal app routes (require auth) ===
+
+    // Match: /dashboard
+    if (hash === '/dashboard' || hash === '/') {
+      return { route: 'dashboard' };
+    }
+
+    // Match: /competitions (list) - exact match
+    if (hash === '/competitions') {
+      return { route: 'competitions' };
+    }
+
+    // Match: /competitions/:slug (competition detail - slug format: lowercase, numbers, hyphens)
+    // This must come after /competitions/:slug/bracket and /competitions/:slug/register checks above
+    const competitionDetailMatch = hash.match(/^\/competitions\/([a-z0-9-]+)$/);
+    if (competitionDetailMatch) {
+      return { route: 'competition-detail', slug: competitionDetailMatch[1] };
+    }
+
+    // Match: /players
+    if (hash === '/players') {
+      return { route: 'players' };
+    }
+
+    // Match: /clubs
+    if (hash === '/clubs') {
+      return { route: 'clubs' };
     }
 
     return null;
@@ -276,7 +323,11 @@ class App {
 
       if (data.authenticated && data.user) {
         this.user = data.user;
-        this.showDashboard();
+        // Navigate to dashboard via URL (if no specific route is set)
+        const currentHash = window.location.hash.slice(1);
+        if (!currentHash || currentHash === '/') {
+          this.navigate('/dashboard');
+        }
       } else {
         this.showLogin();
       }
@@ -332,7 +383,8 @@ class App {
           return;
         }
 
-        this.showDashboard();
+        // Navigate to dashboard via URL
+        this.navigate('/dashboard');
       }
     } catch (error) {
       console.error('Login failed:', error);
@@ -478,7 +530,8 @@ class App {
           return;
         }
 
-        this.showDashboard();
+        // Navigate to dashboard via URL
+        this.navigate('/dashboard');
       },
       onSwitchToLogin: () => {
         this.showLogin();
@@ -495,7 +548,37 @@ class App {
     }
 
     this.showView('app-shell');
-    this.handleNavigation('dashboard');
+    this.handleNavigation('dashboard', false); // Don't update URL, we're already here from routing
+  }
+
+  /**
+   * Show app shell with a specific section (called from routing)
+   */
+  private async showAppShellSection(section: NavSection, competitionId?: string): Promise<void> {
+    if (!this.user) {
+      this.showLogin();
+      return;
+    }
+
+    // Initialize app shell if not already initialized
+    if (!this.appShell) {
+      await this.initAppShell();
+    }
+
+    this.showView('app-shell');
+
+    // Update side nav active state
+    this.appShell?.setActiveSection(section);
+
+    if (section === 'competitions' && competitionId) {
+      // Show competition detail directly
+      this.currentSection = section;
+      this.cleanupCompetitionComponents();
+      this.cleanupPlayerComponents();
+      this.showCompetitionDetail(competitionId, false); // Don't update URL
+    } else {
+      this.handleNavigation(section, false); // Don't update URL, we're already here from routing
+    }
   }
 
   /**
@@ -552,9 +635,18 @@ class App {
 
   /**
    * Handle navigation between sections
+   * @param section - The section to navigate to
+   * @param updateUrl - Whether to update the URL hash (default: true)
    */
-  private handleNavigation(section: NavSection): void {
+  private handleNavigation(section: NavSection, updateUrl: boolean = true): void {
     this.currentSection = section;
+
+    // Update URL if requested
+    if (updateUrl) {
+      const path = section === 'dashboard' ? '/dashboard' : `/${section}`;
+      window.location.hash = path;
+      return; // The hashchange event will trigger handleRoute which calls back with updateUrl=false
+    }
 
     // Cleanup components when switching sections
     this.cleanupCompetitionComponents();
@@ -611,7 +703,7 @@ class App {
       container: contentContainer,
       clubId: currentClub.id,
       onCreateClick: () => this.showCreateCompetition(),
-      onCompetitionClick: (competition) => this.showCompetitionDetail(competition.id),
+      onCompetitionClick: (competition) => this.showCompetitionDetail(competition.slug || competition.id),
     });
   }
 
@@ -627,7 +719,7 @@ class App {
       clubId: currentClub.id,
       onSuccess: (competition) => {
         this.activeCompetitionForm = null;
-        this.showCompetitionDetail(competition.id);
+        this.showCompetitionDetail(competition.slug || competition.id);
       },
       onCancel: () => {
         this.activeCompetitionForm = null;
@@ -637,8 +729,16 @@ class App {
 
   /**
    * Show competition detail
+   * @param slugOrId - The competition slug (or ID for backwards compatibility)
+   * @param updateUrl - Whether to update the URL hash (default: true)
    */
-  private showCompetitionDetail(competitionId: string): void {
+  private showCompetitionDetail(slugOrId: string, updateUrl: boolean = true): void {
+    // Update URL if requested
+    if (updateUrl) {
+      window.location.hash = `/competitions/${slugOrId}`;
+      return; // The hashchange event will handle rendering
+    }
+
     const contentContainer = this.appShell?.getContentContainer();
     if (!contentContainer) return;
 
@@ -654,11 +754,11 @@ class App {
     contentContainer.innerHTML = '';
     this.activeCompetitionDetail = new CompetitionDetail({
       container: contentContainer,
-      competitionId,
+      competitionSlug: slugOrId,
       clubId: currentClub.id,
       onBack: () => {
         this.cleanupCompetitionComponents();
-        this.showCompetitionList();
+        this.navigate('/competitions');
       },
       onNavigateToPublic: (slug) => {
         this.navigate(`/competitions/${slug}/bracket`);
@@ -854,7 +954,7 @@ class App {
         }
       },
       onClose: () => {
-        this.showDashboard();
+        this.navigate('/dashboard');
       },
     });
   }
@@ -896,8 +996,7 @@ class App {
       clubId,
       matchId,
       onClose: () => {
-        window.location.hash = '';
-        this.showDashboard();
+        this.navigate('/dashboard');
       },
     });
   }

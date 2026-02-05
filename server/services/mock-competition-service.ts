@@ -35,6 +35,7 @@ interface DbCompetition {
   public_slug: string | null;
   start_date: string | null;
   end_date: string | null;
+  registration_open: boolean;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -77,14 +78,15 @@ export class MockCompetitionService implements CompetitionService {
     const db = getDatabase();
     const id = uuidv4();
     const now = new Date();
+    const slug = this.generateSlug(input.name);
 
     try {
       const stmt = db.prepare(`
         INSERT INTO competitions (
           id, club_id, name, type, format, status, score_entry_mode,
-          default_scoring_rule_id, start_date, end_date, created_by, created_at, updated_at
+          default_scoring_rule_id, public_slug, start_date, end_date, created_by, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -96,6 +98,7 @@ export class MockCompetitionService implements CompetitionService {
         'draft',
         input.scoreEntryMode || 'organisers_only',
         input.defaultScoringRuleId || null,
+        slug,
         input.startDate || null,
         input.endDate || null,
         createdBy,
@@ -122,6 +125,21 @@ export class MockCompetitionService implements CompetitionService {
         WHERE c.id = ?
       `)
       .get(competitionId) as (DbCompetition & { division_count: number; entry_count: number }) | undefined;
+
+    return row ? this.mapRowToCompetition(row) : null;
+  }
+
+  async getCompetitionBySlug(slug: string, clubId: string): Promise<Competition | null> {
+    const db = getDatabase();
+    const row = db
+      .prepare(`
+        SELECT c.*,
+               (SELECT COUNT(*) FROM divisions WHERE competition_id = c.id) as division_count,
+               (SELECT COUNT(*) FROM entries e JOIN divisions d ON e.division_id = d.id WHERE d.competition_id = c.id) as entry_count
+        FROM competitions c
+        WHERE c.public_slug = ? AND c.club_id = ?
+      `)
+      .get(slug, clubId) as (DbCompetition & { division_count: number; entry_count: number }) | undefined;
 
     return row ? this.mapRowToCompetition(row) : null;
   }
@@ -481,7 +499,10 @@ export class MockCompetitionService implements CompetitionService {
     return `${base}-${suffix}`;
   }
 
-  private mapRowToCompetition(row: DbCompetition & { division_count?: number; entry_count?: number }): Competition {
+  private mapRowToCompetition(row: DbCompetition & { division_count?: number; entry_count?: number }): Competition & { registrationMode: string; requiresApproval: boolean; slug: string | null } {
+    // Map registration_open boolean to registrationMode string (default to organizer_only if not set)
+    const registrationMode = row.registration_open === true ? 'self_registration' : 'organizer_only';
+
     return {
       id: row.id,
       clubId: row.club_id,
@@ -492,11 +513,14 @@ export class MockCompetitionService implements CompetitionService {
       scoreEntryMode: row.score_entry_mode,
       defaultScoringRuleId: row.default_scoring_rule_id,
       publicSlug: row.public_slug,
+      slug: row.public_slug,
       startDate: row.start_date,
       endDate: row.end_date,
       createdBy: row.created_by,
       divisionCount: row.division_count || 0,
       entryCount: row.entry_count || 0,
+      registrationMode,
+      requiresApproval: false,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

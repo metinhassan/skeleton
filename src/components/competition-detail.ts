@@ -18,7 +18,7 @@ export type CompetitionTab = 'overview' | 'divisions' | 'entries' | 'draw' | 'se
 
 export interface CompetitionDetailOptions {
   container: HTMLElement;
-  competitionId: string;
+  competitionSlug: string;
   clubId: string;
   initialTab?: CompetitionTab;
   onBack?: () => void;
@@ -27,7 +27,7 @@ export interface CompetitionDetailOptions {
 
 export class CompetitionDetail {
   private container: HTMLElement;
-  private competitionId: string;
+  private competitionSlug: string;
   private clubId: string;
   private currentTab: CompetitionTab;
   private onBack?: () => void;
@@ -47,7 +47,7 @@ export class CompetitionDetail {
 
   constructor(options: CompetitionDetailOptions) {
     this.container = options.container;
-    this.competitionId = options.competitionId;
+    this.competitionSlug = options.competitionSlug;
     this.clubId = options.clubId;
     this.currentTab = options.initialTab || 'overview';
     this.onBack = options.onBack;
@@ -846,7 +846,8 @@ export class CompetitionDetail {
 
   private async fetchCompetition(): Promise<void> {
     try {
-      const response = await fetch(`/api/competitions/${this.competitionId}`, {
+      // Fetch by slug using the club-scoped endpoint
+      const response = await fetch(`/api/clubs/${this.clubId}/competitions/by-slug/${this.competitionSlug}`, {
         credentials: 'include',
       });
 

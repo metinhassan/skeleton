@@ -35,6 +35,7 @@ interface DbCompetition {
   public_slug: string | null;
   start_date: string | null;
   end_date: string | null;
+  registration_open: boolean;
   created_by: string;
   created_at: Date;
   updated_at: Date;
@@ -81,14 +82,15 @@ export class PostgresCompetitionService implements CompetitionService {
     await this.ensureInitialized();
     const pool = getPool();
     const id = uuidv4();
+    const slug = this.generateSlug(input.name);
 
     try {
       const result = await pool.query<DbCompetition>(
         `INSERT INTO competitions (
           id, club_id, name, type, format, status, score_entry_mode,
-          default_scoring_rule_id, start_date, end_date, created_by
+          default_scoring_rule_id, public_slug, start_date, end_date, created_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING *`,
         [
           id,
@@ -99,6 +101,7 @@ export class PostgresCompetitionService implements CompetitionService {
           'draft',
           input.scoreEntryMode || 'organisers_only',
           input.defaultScoringRuleId || null,
+          slug,
           input.startDate || null,
           input.endDate || null,
           createdBy,
@@ -247,12 +250,12 @@ export class PostgresCompetitionService implements CompetitionService {
     }
 
     const pool = getPool();
-    const slug = this.generateSlug(existing.name);
 
     try {
+      // Slug is already set at creation time, just update status
       const result = await pool.query<DbCompetition>(
-        `UPDATE competitions SET status = 'published', public_slug = $1 WHERE id = $2 RETURNING *`,
-        [slug, competitionId]
+        `UPDATE competitions SET status = 'published' WHERE id = $1 RETURNING *`,
+        [competitionId]
       );
       return { success: true, data: this.mapRowToCompetition(result.rows[0]) };
     } catch (error) {
@@ -282,6 +285,34 @@ export class PostgresCompetitionService implements CompetitionService {
        ) e ON e.competition_id = c.id
        WHERE c.public_slug = $1 AND c.status != 'draft'`,
       [slug]
+    );
+    return result.rows.length > 0 ? this.mapRowToCompetition(result.rows[0]) : null;
+  }
+
+  /**
+   * Get competition by slug (for internal use - includes drafts)
+   */
+  async getCompetitionBySlug(slug: string, clubId: string): Promise<Competition | null> {
+    await this.ensureInitialized();
+    const pool = getPool();
+    const result = await pool.query<DbCompetition & { division_count: string; entry_count: string }>(
+      `SELECT c.*,
+              COALESCE(d.division_count, 0) as division_count,
+              COALESCE(e.entry_count, 0) as entry_count
+       FROM competitions c
+       LEFT JOIN (
+         SELECT competition_id, COUNT(*) as division_count
+         FROM divisions
+         GROUP BY competition_id
+       ) d ON d.competition_id = c.id
+       LEFT JOIN (
+         SELECT d.competition_id, COUNT(e.id) as entry_count
+         FROM divisions d
+         JOIN entries e ON e.division_id = d.id
+         GROUP BY d.competition_id
+       ) e ON e.competition_id = c.id
+       WHERE c.public_slug = $1 AND c.club_id = $2`,
+      [slug, clubId]
     );
     return result.rows.length > 0 ? this.mapRowToCompetition(result.rows[0]) : null;
   }
@@ -497,7 +528,10 @@ export class PostgresCompetitionService implements CompetitionService {
     return `${base}-${suffix}`;
   }
 
-  private mapRowToCompetition(row: DbCompetition & { division_count?: string; entry_count?: string }): Competition {
+  private mapRowToCompetition(row: DbCompetition & { division_count?: string; entry_count?: string }): Competition & { registrationMode: string; requiresApproval: boolean; slug: string | null } {
+    // Map registration_open boolean to registrationMode string (default to organizer_only if not set)
+    const registrationMode = row.registration_open === true ? 'self_registration' : 'organizer_only';
+
     return {
       id: row.id,
       clubId: row.club_id,
@@ -508,11 +542,14 @@ export class PostgresCompetitionService implements CompetitionService {
       scoreEntryMode: row.score_entry_mode,
       defaultScoringRuleId: row.default_scoring_rule_id,
       publicSlug: row.public_slug,
+      slug: row.public_slug,
       startDate: row.start_date,
       endDate: row.end_date,
       createdBy: row.created_by,
       divisionCount: parseInt(row.division_count || '0', 10),
       entryCount: parseInt(row.entry_count || '0', 10),
+      registrationMode,
+      requiresApproval: false,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

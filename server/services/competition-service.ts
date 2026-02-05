@@ -129,6 +129,7 @@ export interface CompetitionService {
   // Competitions
   createCompetition(clubId: string, input: CreateCompetitionInput, createdBy: string): Promise<CompetitionResult<Competition>>;
   getCompetition(competitionId: string): Promise<Competition | null>;
+  getCompetitionBySlug(slug: string, clubId: string): Promise<Competition | null>;
   getClubCompetitions(clubId: string, includeDrafts: boolean): Promise<Competition[]>;
   updateCompetition(competitionId: string, input: UpdateCompetitionInput, updatedBy: string): Promise<CompetitionResult<Competition>>;
   publishCompetition(competitionId: string, publishedBy: string): Promise<CompetitionResult<Competition>>;

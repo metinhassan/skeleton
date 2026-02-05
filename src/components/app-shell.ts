@@ -206,6 +206,23 @@ export class AppShell {
     this.onNavigate?.(section);
   }
 
+  /**
+   * Update the active section visual state without triggering navigation callback
+   * Used when navigating via URL to sync the UI state
+   */
+  setActiveSection(section: NavSection): void {
+    this.currentSection = section;
+
+    // Update title
+    const title = this.shellElement?.querySelector('.app-shell__title');
+    if (title) {
+      title.textContent = SECTION_TITLES[section];
+    }
+
+    // Update side nav active state
+    this.sideNav?.setActiveSection(section);
+  }
+
   getContentContainer(): HTMLElement | null {
     return this.shellElement?.querySelector('#app-shell-content') || null;
   }

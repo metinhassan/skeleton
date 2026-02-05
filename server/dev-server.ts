@@ -1127,7 +1127,7 @@ app.get('/api/clubs/:clubId/competitions', requireAuth as any, requireClubMember
 });
 
 /**
- * GET /api/competitions/:competitionId - Get competition details
+ * GET /api/competitions/:competitionId - Get competition details by ID
  */
 app.get('/api/competitions/:competitionId', requireAuth as any, requireCompetitionAccess as any, async (req: CompetitionRequest, res: Response) => {
   try {
@@ -1142,6 +1142,27 @@ app.get('/api/competitions/:competitionId', requireAuth as any, requireCompetiti
     res.json({ competition, role: req.membership?.role });
   } catch (error) {
     console.error('Get competition error:', error);
+    res.status(500).json({ error: 'Failed to get competition' });
+  }
+});
+
+/**
+ * GET /api/clubs/:clubId/competitions/by-slug/:slug - Get competition details by slug
+ */
+app.get('/api/clubs/:clubId/competitions/by-slug/:slug', requireAuth as any, requireMembership as any, async (req: AuthRequest & { membership?: any }, res: Response) => {
+  try {
+    const { clubId, slug } = req.params;
+    const competitionService = getCompetitionService();
+    const competition = await competitionService.getCompetitionBySlug(slug, clubId);
+
+    if (!competition) {
+      res.status(404).json({ error: 'Competition not found' });
+      return;
+    }
+
+    res.json({ competition, role: req.membership?.role });
+  } catch (error) {
+    console.error('Get competition by slug error:', error);
     res.status(500).json({ error: 'Failed to get competition' });
   }
 });
