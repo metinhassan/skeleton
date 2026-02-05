@@ -149,6 +149,8 @@ export class ProfileEdit {
       this.user = data.user;
       this.onUpdate(data.user);
       this.showSuccess('profile', 'Profile updated successfully');
+      // Close after a brief delay so user sees success message
+      setTimeout(() => this.onClose(), 1000);
     } catch (error) {
       this.showError('profile', 'Update failed. Please try again.');
     }

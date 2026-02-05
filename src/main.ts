@@ -383,8 +383,10 @@ class App {
           return;
         }
 
-        // Navigate to dashboard via URL
-        this.navigate('/dashboard');
+        // Navigate to dashboard - set hash and show view directly
+        // (hashchange may not fire if hash is already /dashboard)
+        window.location.hash = '/dashboard';
+        this.showDashboard();
       }
     } catch (error) {
       console.error('Login failed:', error);
@@ -622,7 +624,7 @@ class App {
     // Update user name display
     this.userNameDisplay = contentContainer.querySelector('#user-name');
     if (this.userNameDisplay && this.user) {
-      const displayName = this.user.name || this.user.email;
+      const displayName = this.user.name || this.user.email || 'User';
       this.userNameDisplay.textContent = `Welcome, ${displayName}`;
     }
 
@@ -950,11 +952,13 @@ class App {
           ...updatedUser,
         };
         if (this.userNameDisplay) {
-          this.userNameDisplay.textContent = `Welcome, ${updatedUser.name}`;
+          const displayName = updatedUser.name || updatedUser.email || 'User';
+          this.userNameDisplay.textContent = `Welcome, ${displayName}`;
         }
       },
       onClose: () => {
-        this.navigate('/dashboard');
+        window.location.hash = '/dashboard';
+        this.showDashboard();
       },
     });
   }
