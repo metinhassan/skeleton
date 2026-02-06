@@ -936,10 +936,7 @@ class App {
   private showProfile(): void {
     if (!this.user) return;
 
-    this.showView('profile');
-
     new ProfileEdit({
-      container: this.profileView,
       user: {
         id: this.user.id,
         email: this.user.email,
@@ -957,8 +954,7 @@ class App {
         }
       },
       onClose: () => {
-        window.location.hash = '/dashboard';
-        this.showDashboard();
+        // Modal handles its own cleanup, nothing else needed
       },
     });
   }

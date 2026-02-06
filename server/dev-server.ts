@@ -735,13 +735,23 @@ app.get('/auth/me', async (req: Request, res: Response) => {
     }
 
     const context = await authProvider.verify(sessionCookie);
+
+    // Fetch fresh user data from database (not from token claims)
+    const userService = getUserService();
+    const user = await userService.findById(context.sub);
+
+    if (!user) {
+      res.status(401).json({ authenticated: false });
+      return;
+    }
+
     res.json({
       authenticated: true,
       user: {
-        id: context.sub,
-        email: context.email,
-        roles: context.roles,
-        name: context.claims.name,
+        id: user.id,
+        email: user.email,
+        roles: user.groups,
+        name: user.name,
       },
     });
   } catch (error) {
@@ -3747,7 +3757,7 @@ async function seedDemoPlayers(clubId: string) {
   const playerService = getPlayerService();
 
   // Check if players already exist
-  const existingPlayers = await playerService.getPlayers(clubId);
+  const existingPlayers = await playerService.getClubPlayers(clubId);
   if (existingPlayers.length > 0) {
     return existingPlayers;
   }
