@@ -195,7 +195,9 @@ export class BracketView {
         ${rounds.map((round, index) => `
           <div class="bracket-round">
             <div class="round-header">${roundNames[index]}</div>
-            ${round.map((match) => this.renderBracketMatch(match)).join('')}
+            <div class="bracket-matches">
+              ${round.map((match) => this.renderBracketMatch(match)).join('')}
+            </div>
           </div>
         `).join('')}
       </div>

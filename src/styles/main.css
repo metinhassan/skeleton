@@ -1135,6 +1135,9 @@ body {
   gap: 1rem;
   padding: 1rem;
   min-width: max-content;
+  margin: 0 auto;
+  justify-content: center;
+  align-items: stretch;
 }
 
 .bracket-round {
@@ -1142,6 +1145,7 @@ body {
   flex-direction: column;
   gap: 1rem;
   min-width: 220px;
+  flex: 1;
 }
 
 .round-header {

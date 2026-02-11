@@ -3454,14 +3454,9 @@ app.get('/api/public/live/competitions/:slug', async (req: Request, res: Respons
     const { slug } = req.params;
 
     const competitionService = getCompetitionService();
-    const competition = await competitionService.getCompetitionBySlug(slug);
+    const competition = await competitionService.getPublicCompetition(slug);
 
     if (!competition) {
-      res.status(404).json({ error: 'Competition not found' });
-      return;
-    }
-
-    if (competition.status === 'draft') {
       res.status(404).json({ error: 'Competition not found' });
       return;
     }
@@ -3601,14 +3596,9 @@ app.get('/api/public/competitions/:slug/bracket', async (req: Request, res: Resp
     const { slug } = req.params;
 
     const competitionService = getCompetitionService();
-    const competition = await competitionService.getCompetitionBySlug(slug);
+    const competition = await competitionService.getPublicCompetition(slug);
 
     if (!competition) {
-      res.status(404).json({ error: 'Competition not found' });
-      return;
-    }
-
-    if (competition.status === 'draft') {
       res.status(404).json({ error: 'Competition not found' });
       return;
     }
@@ -3616,20 +3606,61 @@ app.get('/api/public/competitions/:slug/bracket', async (req: Request, res: Resp
     const divisions = await competitionService.getDivisions(competition.id);
     const drawService = getDrawService();
 
-    const brackets = await Promise.all(
-      divisions.map(async (division) => {
-        const draws = await drawService.getDivisionDraws(division.id);
-        const drawsWithMatches = await Promise.all(
-          draws.map(async (draw) => {
-            const matches = await drawService.getDrawMatches(draw.id);
-            return { ...draw, matches };
-          })
-        );
-        return { division, draws: drawsWithMatches };
-      })
-    );
+    // Collect all matches across divisions/draws, grouped by round
+    const allMatches: any[] = [];
+    for (const division of divisions) {
+      const draws = await drawService.getDivisionDraws(division.id);
+      for (const draw of draws) {
+        const matches = await drawService.getDrawMatchesWithNames(draw.id);
+        allMatches.push(...matches.map(m => ({ ...m, divisionName: division.name })));
+      }
+    }
 
-    res.json({ competition: { id: competition.id, name: competition.name }, brackets });
+    // Group matches into rounds and transform to BracketMatch format
+    const roundMap = new Map<number, any[]>();
+    for (const match of allMatches) {
+      const round = match.roundNumber || 1;
+      if (!roundMap.has(round)) roundMap.set(round, []);
+
+      // Calculate scores from SetScore array if available
+      let e1Score: string | null = null;
+      let e2Score: string | null = null;
+      if (match.score && Array.isArray(match.score)) {
+        let s1 = 0, s2 = 0;
+        for (const set of match.score) {
+          if (Array.isArray(set)) { s1 += set[0] || 0; s2 += set[1] || 0; }
+        }
+        e1Score = String(s1);
+        e2Score = String(s2);
+      } else if (match.entry1Score != null || match.entry2Score != null) {
+        e1Score = match.entry1Score != null ? String(match.entry1Score) : null;
+        e2Score = match.entry2Score != null ? String(match.entry2Score) : null;
+      }
+
+      roundMap.get(round)!.push({
+        id: match.id,
+        round: match.roundNumber || 1,
+        position: match.matchNumber || 1,
+        entry1Name: match.entry1Name || null,
+        entry2Name: match.entry2Name || null,
+        entry1Score: e1Score,
+        entry2Score: e2Score,
+        winnerId: match.winnerEntryId || null,
+        status: match.status === 'pending' || match.status === 'scheduled' || match.status === 'not_started'
+          ? 'upcoming' : match.status === 'in_progress' ? 'in_progress' : 'completed',
+      });
+    }
+
+    // Sort rounds and build rounds array
+    const sortedRounds = [...roundMap.keys()].sort((a, b) => a - b);
+    const rounds = sortedRounds.map(r => roundMap.get(r)!);
+
+    const bracket = rounds.length > 0 ? { format: competition.format || 'knockout', rounds } : undefined;
+
+    res.json({
+      competition: { id: competition.id, name: competition.name, format: competition.format },
+      bracket,
+    });
   } catch (error) {
     console.error('Get public bracket error:', error);
     res.status(500).json({ error: 'Failed to get bracket' });
@@ -3644,14 +3675,9 @@ app.get('/api/public/competitions/:slug/standings', async (req: Request, res: Re
     const { slug } = req.params;
 
     const competitionService = getCompetitionService();
-    const competition = await competitionService.getCompetitionBySlug(slug);
+    const competition = await competitionService.getPublicCompetition(slug);
 
     if (!competition) {
-      res.status(404).json({ error: 'Competition not found' });
-      return;
-    }
-
-    if (competition.status === 'draft') {
       res.status(404).json({ error: 'Competition not found' });
       return;
     }
@@ -3664,18 +3690,34 @@ app.get('/api/public/competitions/:slug/standings', async (req: Request, res: Re
         const draws = await drawService.getDivisionDraws(division.id);
         const roundRobinDraws = draws.filter(d => d.drawType === 'round_robin');
 
-        const standingsPerDraw = await Promise.all(
-          roundRobinDraws.map(async (draw) => {
-            const standings = await drawService.getStandings(draw.id);
-            return { draw, standings };
-          })
-        );
+        // Flatten all standings entries across draws for this division
+        const allEntries: any[] = [];
+        for (const draw of roundRobinDraws) {
+          const standings = await drawService.getStandings(draw.id);
+          allEntries.push(...standings);
+        }
 
-        return { division, standings: standingsPerDraw };
+        // Transform to StandingsEntry format expected by frontend
+        const entries = allEntries.map((s, idx) => ({
+          position: s.position || idx + 1,
+          entryName: s.entryName || 'Unknown',
+          entryId: s.entryId,
+          wins: s.wins || 0,
+          losses: s.losses || 0,
+          gamesFor: s.gamesWon || 0,
+          gamesAgainst: s.gamesLost || 0,
+          gamesDiff: (s.gamesWon || 0) - (s.gamesLost || 0),
+          points: s.points || 0,
+        }));
+
+        return { division: division.name, standings: entries };
       })
     );
 
-    res.json({ competition: { id: competition.id, name: competition.name }, standings: standingsData });
+    res.json({
+      competition: { id: competition.id, name: competition.name, format: competition.format },
+      standings: standingsData,
+    });
   } catch (error) {
     console.error('Get public standings error:', error);
     res.status(500).json({ error: 'Failed to get standings' });
