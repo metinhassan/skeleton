@@ -116,10 +116,12 @@ function transformMatchForFrontend(match: any): any {
     }
   }
 
-  // Map 'pending' status to 'not_started' for frontend
+  // Map backend statuses to frontend equivalents
   let status = match.status;
-  if (status === 'pending') {
+  if (status === 'pending' || status === 'scheduled') {
     status = 'not_started';
+  } else if (status === 'retired') {
+    status = 'walkover';
   }
 
   return {
@@ -1182,12 +1184,18 @@ app.get('/api/clubs/:clubId/competitions/by-slug/:slug', requireAuth as any, req
  */
 app.put('/api/competitions/:competitionId', requireAuth as any, requireCompetitionOrganiser as any, async (req: CompetitionRequest, res: Response) => {
   try {
-    const { name, type, format, scoreEntryMode, defaultScoringRuleId, startDate, endDate } = req.body;
+    const { name, type, format, scoreEntryMode, defaultScoringRuleId, startDate, endDate, registrationMode, registrationDeadline } = req.body;
+
+    // Map frontend registrationMode to DB registration_open boolean
+    let registrationOpen: boolean | undefined;
+    if (registrationMode !== undefined) {
+      registrationOpen = registrationMode !== 'organizer_only';
+    }
 
     const competitionService = getCompetitionService();
     const result = await competitionService.updateCompetition(
       req.competitionId!,
-      { name, type, format, scoreEntryMode, defaultScoringRuleId, startDate, endDate },
+      { name, type, format, scoreEntryMode, defaultScoringRuleId, startDate, endDate, registrationOpen, registrationDeadline: registrationDeadline || null },
       req.user!.id
     );
 

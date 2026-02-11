@@ -79,6 +79,8 @@ export interface UpdateCompetitionInput {
   defaultScoringRuleId?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  registrationOpen?: boolean;
+  registrationDeadline?: string | null;
 }
 
 export interface CreateDivisionInput {

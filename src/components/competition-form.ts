@@ -409,7 +409,7 @@ export class CompetitionForm {
       name: nameInput.value.trim(),
       type: typeSelect.value as CompetitionType,
       format: formatSelect.value as CompetitionFormat,
-      scoreEntryMode: scoreEntryCheckbox.checked ? 'players_can_submit' : 'organizers_only',
+      scoreEntryMode: scoreEntryCheckbox.checked ? 'players_can_submit' : 'organisers_only',
     };
 
     if (startDateInput.value) {

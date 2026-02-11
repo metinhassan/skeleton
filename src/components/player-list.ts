@@ -208,7 +208,7 @@ export class PlayerList {
         <td class="player-table__email">${player.email ? this.escapeHtml(player.email) : '-'}</td>
         <td class="player-table__phone">${player.phone ? this.escapeHtml(player.phone) : '-'}</td>
         <td>
-          ${player.linkedUserId
+          ${player.userId
             ? '<span class="linked-badge linked-badge--linked">Linked</span>'
             : '<span class="linked-badge linked-badge--unlinked">Unlinked</span>'
           }

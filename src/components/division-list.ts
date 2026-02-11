@@ -117,7 +117,7 @@ export class DivisionList {
           <div class="division-row__name">${this.escapeHtml(division.name)}</div>
           <div class="division-row__meta">
             <span>Format: ${formatDisplay}</span>
-            ${division.scoringRule ? `<span>Scoring: ${division.scoringRule}</span>` : ''}
+            ${division.scoringRuleId ? `<span>Scoring: ${division.scoringRuleId}</span>` : ''}
           </div>
         </div>
         <div class="division-row__stats">
@@ -154,6 +154,12 @@ export class DivisionList {
   }
 
   private bindRowEvents(): void {
+    // Empty state add button (re-rendered inside #division-content)
+    const emptyAddBtn = this.container.querySelector('#empty-add-btn');
+    if (emptyAddBtn) {
+      emptyAddBtn.addEventListener('click', () => this.onCreateClick?.());
+    }
+
     // Row clicks (for future expansion/navigation)
     const rows = this.container.querySelectorAll('.division-row');
     rows.forEach((row) => {

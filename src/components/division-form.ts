@@ -101,10 +101,10 @@ export class DivisionForm {
             <label class="form-label" for="div-scoring">Scoring Rule</label>
             <select id="div-scoring" class="form-select">
               <option value="">Default</option>
-              <option value="best_of_3" ${div?.scoringRule === 'best_of_3' ? 'selected' : ''}>Best of 3 sets</option>
-              <option value="best_of_5" ${div?.scoringRule === 'best_of_5' ? 'selected' : ''}>Best of 5 sets</option>
-              <option value="pro_set" ${div?.scoringRule === 'pro_set' ? 'selected' : ''}>Pro set (first to 8)</option>
-              <option value="tiebreak_set" ${div?.scoringRule === 'tiebreak_set' ? 'selected' : ''}>Tiebreak set (first to 10)</option>
+              <option value="best_of_3" ${div?.scoringRuleId === 'best_of_3' ? 'selected' : ''}>Best of 3 sets</option>
+              <option value="best_of_5" ${div?.scoringRuleId === 'best_of_5' ? 'selected' : ''}>Best of 5 sets</option>
+              <option value="pro_set" ${div?.scoringRuleId === 'pro_set' ? 'selected' : ''}>Pro set (first to 8)</option>
+              <option value="tiebreak_set" ${div?.scoringRuleId === 'tiebreak_set' ? 'selected' : ''}>Tiebreak set (first to 10)</option>
             </select>
             <div class="form-hint">Optional: Override the default scoring rules</div>
           </div>
@@ -254,7 +254,7 @@ export class DivisionForm {
     }
 
     if (scoringSelect.value) {
-      data.scoringRule = scoringSelect.value;
+      data.scoringRuleId = scoringSelect.value;
     }
 
     return data;

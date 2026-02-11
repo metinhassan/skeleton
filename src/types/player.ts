@@ -8,7 +8,7 @@ export interface Player {
   name: string;
   email: string | null;
   phone: string | null;
-  linkedUserId: string | null;
+  userId: string | null;
   createdAt: string;
   updatedAt: string;
 }

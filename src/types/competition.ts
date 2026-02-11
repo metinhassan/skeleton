@@ -6,7 +6,7 @@ export type CompetitionType = 'tournament' | 'league';
 export type CompetitionFormat = 'knockout' | 'round_robin' | 'swiss' | 'ladder';
 export type CompetitionStatus = 'draft' | 'published' | 'in_progress' | 'completed' | 'cancelled';
 export type RegistrationMode = 'organizer_only' | 'self_registration' | 'both';
-export type ScoreEntryMode = 'organizers_only' | 'players_can_submit';
+export type ScoreEntryMode = 'organisers_only' | 'players_can_submit';
 
 export interface Competition {
   id: string;

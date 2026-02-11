@@ -11,7 +11,7 @@ export interface Division {
   competitionId: string;
   name: string;
   format: CompetitionFormat | null;
-  scoringRule: string | null;
+  scoringRuleId: string | null;
   sortOrder: number;
   entryCount: number;
   drawStatus: DrawStatus;
@@ -22,7 +22,7 @@ export interface Division {
 export interface CreateDivisionData {
   name: string;
   format?: CompetitionFormat;
-  scoringRule?: string;
+  scoringRuleId?: string;
 }
 
 export interface UpdateDivisionData extends Partial<CreateDivisionData> {

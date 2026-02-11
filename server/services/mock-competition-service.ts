@@ -206,6 +206,14 @@ export class MockCompetitionService implements CompetitionService {
       updates.push('end_date = ?');
       values.push(input.endDate);
     }
+    if (input.registrationOpen !== undefined) {
+      updates.push('registration_open = ?');
+      values.push(input.registrationOpen ? '1' : '0');
+    }
+    if (input.registrationDeadline !== undefined) {
+      updates.push('registration_deadline = ?');
+      values.push(input.registrationDeadline);
+    }
 
     if (updates.length === 0) {
       return { success: true, data: existing };

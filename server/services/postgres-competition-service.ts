@@ -36,6 +36,7 @@ interface DbCompetition {
   start_date: string | null;
   end_date: string | null;
   registration_open: boolean;
+  registration_deadline: string | null;
   created_by: string;
   created_at: Date;
   updated_at: Date;
@@ -215,6 +216,14 @@ export class PostgresCompetitionService implements CompetitionService {
     if (input.endDate !== undefined) {
       updates.push(`end_date = $${paramIndex++}`);
       values.push(input.endDate);
+    }
+    if (input.registrationOpen !== undefined) {
+      updates.push(`registration_open = $${paramIndex++}`);
+      values.push(input.registrationOpen as any);
+    }
+    if (input.registrationDeadline !== undefined) {
+      updates.push(`registration_deadline = $${paramIndex++}`);
+      values.push(input.registrationDeadline);
     }
 
     if (updates.length === 0) {
@@ -550,6 +559,7 @@ export class PostgresCompetitionService implements CompetitionService {
       entryCount: parseInt(row.entry_count || '0', 10),
       registrationMode,
       requiresApproval: false,
+      registrationDeadline: row.registration_deadline || null,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

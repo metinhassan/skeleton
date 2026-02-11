@@ -113,7 +113,7 @@ export class PlayerForm {
             <div class="form-hint">Optional. For contact purposes.</div>
           </div>
 
-          ${isEdit && p?.linkedUserId ? `
+          ${isEdit && p?.userId ? `
             <div class="form-row">
               <div class="form-info">
                 <span class="linked-badge linked-badge--linked">Linked to user account</span>

@@ -375,6 +375,12 @@ export class EntryList {
   }
 
   private bindContentEvents(): void {
+    // Empty state add button (re-rendered inside #entry-content)
+    const emptyAddBtn = this.container.querySelector('#empty-add-entry-btn');
+    if (emptyAddBtn) {
+      emptyAddBtn.addEventListener('click', () => this.onAddEntry?.());
+    }
+
     // Select all checkbox
     const selectAllCheckbox = this.container.querySelector('#select-all-entries') as HTMLInputElement;
     if (selectAllCheckbox) {
