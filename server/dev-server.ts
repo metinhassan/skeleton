@@ -134,6 +134,7 @@ function transformMatchForFrontend(match: any): any {
     winnerId: match.winnerEntryId || null,
     entry1Score,
     entry2Score,
+    score: match.score || null,
     status,
     scheduledTime: match.scheduledTime,
     court: match.court,

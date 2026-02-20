@@ -225,6 +225,9 @@ export class DrawManager {
     const entry1IsWinner = match.winnerId && match.winnerId === match.entry1Id;
     const entry2IsWinner = match.winnerId && match.winnerId === match.entry2Id;
 
+    const showScoreBtn = (this.state === 'active' || this.state === 'completed') && !isBye && match.entry1Id && match.entry2Id;
+    const scoreBtnLabel = match.status === 'in_progress' ? 'Continue Scoring' : isCompleted ? 'View Score' : 'Score';
+
     return `
       <div class="bracket-match${isLive ? ' live' : ''}${isBye ? ' bye' : ''}">
         <div class="bracket-entry${entry1IsWinner ? ' winner' : ''}${!match.entry1Id ? ' tbd' : ''}">
@@ -235,6 +238,11 @@ export class DrawManager {
           <span class="bracket-name">${this.escapeHtml(entry2Name)}</span>
           ${isCompleted && match.entry2Score !== null ? `<span class="bracket-score">${match.entry2Score}</span>` : ''}
         </div>
+        ${showScoreBtn ? `
+          <div class="bracket-match__actions">
+            <button class="btn btn-sm btn-outline score-match-btn" data-match-id="${match.id}">${scoreBtnLabel}</button>
+          </div>
+        ` : ''}
       </div>
     `;
   }
@@ -326,6 +334,10 @@ export class DrawManager {
     const entry2Name = match.entry2Name || 'BYE';
     const isCompleted = match.status === 'completed' || match.status === 'walkover';
     const isLive = match.status === 'in_progress';
+    const isBye = match.status === 'bye';
+
+    const showScoreBtn = (this.state === 'active' || this.state === 'completed') && !isBye && match.entry1Id && match.entry2Id;
+    const scoreBtnLabel = match.status === 'in_progress' ? 'Continue Scoring' : isCompleted ? 'View Score' : 'Score';
 
     return `
       <div class="round-robin-match${isLive ? ' live' : ''}">
@@ -337,6 +349,7 @@ export class DrawManager {
         ${isCompleted
           ? `<span class="round-robin-match__score">${match.entry1Score} - ${match.entry2Score}</span>`
           : `<span class="round-robin-match__status">${this.formatMatchStatus(match.status)}</span>`}
+        ${showScoreBtn ? `<button class="btn btn-sm btn-outline score-match-btn" data-match-id="${match.id}">${scoreBtnLabel}</button>` : ''}
       </div>
     `;
   }
@@ -408,6 +421,15 @@ export class DrawManager {
     if (regenerateBtn) {
       regenerateBtn.addEventListener('click', () => this.handleRegenerate());
     }
+
+    // Score match buttons
+    this.container.querySelectorAll('.score-match-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const matchId = (btn as HTMLElement).dataset.matchId;
+        const match = this.currentDraw?.matches.find(m => m.id === matchId);
+        if (match) this.showScoreModal(match);
+      });
+    });
   }
 
   private async fetchDivisions(): Promise<void> {
@@ -650,6 +672,213 @@ export class DrawManager {
       console.error('Failed to regenerate draw:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to regenerate draw');
     }
+  }
+
+  private showScoreModal(match: Match): void {
+    const isCompleted = match.status === 'completed' || match.status === 'walkover';
+    const isWalkover = match.status === 'walkover';
+    const entry1Name = match.entry1Name || 'Entry 1';
+    const entry2Name = match.entry2Name || 'Entry 2';
+
+    // Pre-fill scores from existing match data
+    const existingScore: number[][] = match.score && Array.isArray(match.score) ? match.score : [];
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay modal-overlay--visible';
+    overlay.innerHTML = `
+      <div class="modal score-modal" style="max-width: 440px;">
+        <div class="modal__header">
+          <h2 class="modal__title">${isCompleted ? 'Match Score' : 'Enter Score'}</h2>
+          <button class="modal__close" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal__body">
+          <div class="score-modal__matchup">
+            <span class="score-modal__entry-name">${this.escapeHtml(entry1Name)}</span>
+            <span class="score-modal__vs">vs</span>
+            <span class="score-modal__entry-name">${this.escapeHtml(entry2Name)}</span>
+          </div>
+
+          <label class="score-modal__walkover">
+            <input type="checkbox" id="score-walkover" ${isWalkover ? 'checked' : ''} ${isCompleted ? 'disabled' : ''}>
+            <span>Walkover</span>
+          </label>
+
+          <div class="score-modal__sets" id="score-sets">
+            ${[0, 1, 2].map(i => `
+              <div class="score-modal__set-row">
+                <span class="score-modal__set-label">Set ${i + 1}</span>
+                <input type="number" class="score-modal__set-input" id="score-e1-set${i}"
+                  min="0" max="99" value="${existingScore[i]?.[0] ?? ''}"
+                  ${isCompleted ? 'readonly' : ''} ${isWalkover ? 'disabled' : ''}>
+                <span class="score-modal__dash">&ndash;</span>
+                <input type="number" class="score-modal__set-input" id="score-e2-set${i}"
+                  min="0" max="99" value="${existingScore[i]?.[1] ?? ''}"
+                  ${isCompleted ? 'readonly' : ''} ${isWalkover ? 'disabled' : ''}>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="score-modal__winner">
+            <span class="score-modal__winner-label">Winner:</span>
+            <label class="score-modal__winner-option">
+              <input type="radio" name="score-winner" value="${match.entry1Id}"
+                ${match.winnerId === match.entry1Id ? 'checked' : ''} ${isCompleted ? 'disabled' : ''}>
+              <span>${this.escapeHtml(entry1Name)}</span>
+            </label>
+            <label class="score-modal__winner-option">
+              <input type="radio" name="score-winner" value="${match.entry2Id}"
+                ${match.winnerId === match.entry2Id ? 'checked' : ''} ${isCompleted ? 'disabled' : ''}>
+              <span>${this.escapeHtml(entry2Name)}</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal__footer">
+          ${isCompleted ? `
+            <button class="btn btn-outline" id="score-clear" style="color: var(--color-error); border-color: var(--color-error);">Clear Result</button>
+            <button class="btn btn-outline" id="score-cancel">Close</button>
+          ` : `
+            <button class="btn btn-outline" id="score-cancel">Cancel</button>
+            <button class="btn btn-primary" id="score-save">Save</button>
+          `}
+        </div>
+      </div>
+    `;
+
+    const cleanup = () => {
+      overlay.classList.remove('modal-overlay--visible');
+      setTimeout(() => overlay.remove(), 200);
+    };
+
+    // Close handlers
+    overlay.querySelector('.modal__close')?.addEventListener('click', cleanup);
+    overlay.querySelector('#score-cancel')?.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cleanup();
+    });
+
+    // Walkover toggle
+    const walkoverCheckbox = overlay.querySelector('#score-walkover') as HTMLInputElement;
+    const setInputs = overlay.querySelectorAll('.score-modal__set-input') as NodeListOf<HTMLInputElement>;
+
+    if (walkoverCheckbox && !isCompleted) {
+      walkoverCheckbox.addEventListener('change', () => {
+        setInputs.forEach(input => {
+          input.disabled = walkoverCheckbox.checked;
+          if (walkoverCheckbox.checked) input.value = '';
+        });
+      });
+    }
+
+    // Auto-detect winner from scores
+    if (!isCompleted) {
+      const autoDetectWinner = () => {
+        if (walkoverCheckbox?.checked) return;
+        let e1Sets = 0;
+        let e2Sets = 0;
+        for (let i = 0; i < 3; i++) {
+          const e1 = parseInt((overlay.querySelector(`#score-e1-set${i}`) as HTMLInputElement)?.value) || 0;
+          const e2 = parseInt((overlay.querySelector(`#score-e2-set${i}`) as HTMLInputElement)?.value) || 0;
+          if (e1 > 0 || e2 > 0) {
+            if (e1 > e2) e1Sets++;
+            else if (e2 > e1) e2Sets++;
+          }
+        }
+        if (e1Sets > e2Sets) {
+          const radio = overlay.querySelector(`input[name="score-winner"][value="${match.entry1Id}"]`) as HTMLInputElement;
+          if (radio) radio.checked = true;
+        } else if (e2Sets > e1Sets) {
+          const radio = overlay.querySelector(`input[name="score-winner"][value="${match.entry2Id}"]`) as HTMLInputElement;
+          if (radio) radio.checked = true;
+        }
+      };
+
+      setInputs.forEach(input => {
+        input.addEventListener('input', autoDetectWinner);
+      });
+    }
+
+    // Save handler
+    overlay.querySelector('#score-save')?.addEventListener('click', async () => {
+      const winnerId = (overlay.querySelector('input[name="score-winner"]:checked') as HTMLInputElement)?.value;
+      if (!winnerId) {
+        toast.error('Please select a winner');
+        return;
+      }
+
+      const isWalkoverEntry = walkoverCheckbox?.checked;
+      const score: number[][] = [];
+
+      if (!isWalkoverEntry) {
+        for (let i = 0; i < 3; i++) {
+          const e1 = parseInt((overlay.querySelector(`#score-e1-set${i}`) as HTMLInputElement)?.value);
+          const e2 = parseInt((overlay.querySelector(`#score-e2-set${i}`) as HTMLInputElement)?.value);
+          if (!isNaN(e1) && !isNaN(e2)) {
+            score.push([e1, e2]);
+          }
+        }
+        if (score.length === 0) {
+          toast.error('Please enter at least one set score');
+          return;
+        }
+      }
+
+      const saveBtn = overlay.querySelector('#score-save') as HTMLButtonElement;
+      if (saveBtn) saveBtn.disabled = true;
+
+      try {
+        const response = await fetch(`/api/matches/${match.id}/result`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            winnerId,
+            score: isWalkoverEntry ? undefined : score,
+            status: isWalkoverEntry ? 'walkover' : 'completed',
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to save score');
+        }
+
+        cleanup();
+        toast.success('Score saved successfully');
+        this.loadDrawForDivision();
+      } catch (error) {
+        console.error('Failed to save score:', error);
+        toast.error(error instanceof Error ? error.message : 'Failed to save score');
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    });
+
+    // Clear result handler
+    overlay.querySelector('#score-clear')?.addEventListener('click', async () => {
+      const clearBtn = overlay.querySelector('#score-clear') as HTMLButtonElement;
+      if (clearBtn) clearBtn.disabled = true;
+
+      try {
+        const response = await fetch(`/api/matches/${match.id}/result`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to clear result');
+        }
+
+        cleanup();
+        toast.success('Result cleared');
+        this.loadDrawForDivision();
+      } catch (error) {
+        console.error('Failed to clear result:', error);
+        toast.error(error instanceof Error ? error.message : 'Failed to clear result');
+        if (clearBtn) clearBtn.disabled = false;
+      }
+    });
+
+    document.body.appendChild(overlay);
   }
 
   private showConfirmation(title: string, message: string, confirmText: string): Promise<boolean> {

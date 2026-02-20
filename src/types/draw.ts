@@ -28,6 +28,7 @@ export interface Match {
   winnerId: string | null;
   entry1Score: number | null;
   entry2Score: number | null;
+  score: number[][] | null;
   status: MatchStatus;
   scheduledTime: string | null;
   court: string | null;
