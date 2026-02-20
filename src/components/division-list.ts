@@ -97,7 +97,7 @@ export class DivisionList {
         <div class="division-empty__icon">📋</div>
         <h3 class="division-empty__title">No divisions yet</h3>
         <p class="division-empty__description">
-          Add divisions to organize your competition by skill level, age group, or category.
+          Add divisions to organise your competition by skill level, age group, or category.
         </p>
         <button class="btn btn-primary" id="empty-add-btn">
           + Add Division
@@ -117,7 +117,7 @@ export class DivisionList {
           <div class="division-row__name">${this.escapeHtml(division.name)}</div>
           <div class="division-row__meta">
             <span>Format: ${formatDisplay}</span>
-            ${division.scoringRuleId ? `<span>Scoring: ${division.scoringRuleId}</span>` : ''}
+            ${division.scoringRuleName ? `<span>Scoring: ${this.escapeHtml(division.scoringRuleName)}</span>` : ''}
           </div>
         </div>
         <div class="division-row__stats">

@@ -368,10 +368,11 @@ export class PostgresCompetitionService implements CompetitionService {
   async getDivisions(competitionId: string): Promise<Division[]> {
     await this.ensureInitialized();
     const pool = getPool();
-    const result = await pool.query<DbDivision & { entry_count: string; draw_status: string | null }>(
+    const result = await pool.query<DbDivision & { entry_count: string; draw_status: string | null; scoring_rule_name: string | null }>(
       `SELECT d.*,
               COALESCE(e.entry_count, 0) as entry_count,
-              dr.status as draw_status
+              dr.status as draw_status,
+              sr.name as scoring_rule_name
        FROM divisions d
        LEFT JOIN (
          SELECT division_id, COUNT(*) as entry_count
@@ -381,6 +382,7 @@ export class PostgresCompetitionService implements CompetitionService {
        LEFT JOIN LATERAL (
          SELECT status FROM draws WHERE division_id = d.id ORDER BY created_at DESC LIMIT 1
        ) dr ON true
+       LEFT JOIN scoring_rules sr ON sr.id = d.scoring_rule_id
        WHERE d.competition_id = $1
        ORDER BY d.sort_order, d.name`,
       [competitionId]
@@ -565,7 +567,7 @@ export class PostgresCompetitionService implements CompetitionService {
     };
   }
 
-  private mapRowToDivision(row: DbDivision & { entry_count?: string; draw_status?: string | null }): Division {
+  private mapRowToDivision(row: DbDivision & { entry_count?: string; draw_status?: string | null; scoring_rule_name?: string | null }): Division {
     // Map draw status from 'draft'/'active'/'completed' to frontend DrawStatus
     let drawStatus: 'not_generated' | 'generated' | 'in_progress' | 'completed' = 'not_generated';
     if (row.draw_status === 'draft') {
@@ -582,6 +584,7 @@ export class PostgresCompetitionService implements CompetitionService {
       name: row.name,
       format: row.format,
       scoringRuleId: row.scoring_rule_id,
+      scoringRuleName: row.scoring_rule_name || null,
       sortOrder: row.sort_order,
       entryCount: parseInt(row.entry_count || '0', 10),
       drawStatus,

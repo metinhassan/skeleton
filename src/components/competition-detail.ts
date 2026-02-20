@@ -199,7 +199,7 @@ export class CompetitionDetail {
           <div class="overview-card">
             <div class="overview-card__label">Score Entry</div>
             <div class="overview-card__value">
-              ${comp.scoreEntryMode === 'players_can_submit' ? 'Players can submit' : 'Organizers only'}
+              ${comp.scoreEntryMode === 'players_can_submit' ? 'Players can submit' : 'Organisers only'}
             </div>
           </div>
         </div>
@@ -273,6 +273,7 @@ export class CompetitionDetail {
     this.divisionForm = new DivisionForm({
       mode: 'create',
       competitionId: this.competition.id,
+      clubId: this.clubId,
       competitionFormat: this.competition.format,
       onSuccess: () => {
         this.divisionForm = null;
@@ -294,6 +295,7 @@ export class CompetitionDetail {
     this.divisionForm = new DivisionForm({
       mode: 'edit',
       competitionId: this.competition.id,
+      clubId: this.clubId,
       competitionFormat: this.competition.format,
       division,
       onSuccess: () => {
@@ -1023,7 +1025,7 @@ export class CompetitionDetail {
 
   private formatRegistrationMode(mode: string): string {
     const modeMap: Record<string, string> = {
-      organizer_only: 'Organizer Only',
+      organizer_only: 'Organiser Only',
       self_registration: 'Self Registration',
       both: 'Both',
     };

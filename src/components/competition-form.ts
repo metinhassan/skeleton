@@ -173,7 +173,7 @@ export class CompetitionForm {
         <label class="form-label" for="comp-registration-mode">Registration Mode</label>
         <select id="comp-registration-mode" class="form-select">
           <option value="organizer_only" ${comp.registrationMode === 'organizer_only' ? 'selected' : ''}>
-            Organizer Only
+            Organiser Only
           </option>
           <option value="self_registration" ${comp.registrationMode === 'self_registration' ? 'selected' : ''}>
             Self Registration

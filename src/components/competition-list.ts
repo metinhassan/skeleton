@@ -88,7 +88,7 @@ export class CompetitionList {
         <div class="empty-state__icon">🏆</div>
         <h3 class="empty-state__title">No competitions yet</h3>
         <p class="empty-state__description">
-          Create your first competition to start organizing tournaments and leagues for your club.
+          Create your first competition to start organising tournaments and leagues for your club.
         </p>
         <button class="btn btn-primary" id="empty-create-btn">
           + Create Competition

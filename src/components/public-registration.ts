@@ -131,7 +131,7 @@ export class PublicRegistration {
     // Check registration mode
     const mode = this.competition.registrationMode as RegistrationMode;
     if (mode === 'organizer_only') {
-      return 'Self-registration is not available for this competition. Please contact the organizer to register.';
+      return 'Self-registration is not available for this competition. Please contact the organiser to register.';
     }
 
     // Check registration deadline
@@ -245,7 +245,7 @@ export class PublicRegistration {
         ${this.requiresApproval ? `
           <div class="info-card__note">
             <span class="info-card__note-icon">i</span>
-            Registrations require organizer approval before confirmation.
+            Registrations require organiser approval before confirmation.
           </div>
         ` : ''}
       </div>
@@ -396,7 +396,7 @@ export class PublicRegistration {
             <h2>Registration ${this.requiresApproval ? 'Submitted' : 'Confirmed'}</h2>
             <p>
               ${this.requiresApproval
-                ? 'Your registration has been submitted and is pending organizer approval. You will be notified once your registration is approved.'
+                ? 'Your registration has been submitted and is pending organiser approval. You will be notified once your registration is approved.'
                 : 'You have been successfully registered for this competition. Good luck!'
               }
             </p>
@@ -508,7 +508,7 @@ export class PublicRegistration {
           case 'registration_closed':
             throw new Error('Registration is closed for this competition.');
           case 'player_not_found':
-            throw new Error('Your player profile was not found. Please contact the organizer.');
+            throw new Error('Your player profile was not found. Please contact the organiser.');
           default:
             throw new Error(errorData.error || 'Registration failed. Please try again.');
         }

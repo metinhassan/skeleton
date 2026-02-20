@@ -5,10 +5,10 @@
 -- ==================== Scoring Rule Presets ====================
 -- These are the same presets that seedScoringPresets() adds for SQLite
 INSERT INTO scoring_rules (id, club_id, name, config, is_preset, created_at, updated_at) VALUES
-  ('00000000-0000-0000-0001-000000000001', NULL, 'Best of 3 Sets', '{"bestOfSets": 3, "gamesToWin": 6, "winBy": 2, "tiebreakAt": 6, "tiebreakPointsToWin": 7}', true, NOW(), NOW()),
-  ('00000000-0000-0000-0001-000000000002', NULL, 'Match Tiebreak', '{"bestOfSets": 1, "gamesToWin": 6, "winBy": 2, "tiebreakAt": 6, "tiebreakPointsToWin": 10, "matchTiebreakInsteadOfFinalSet": true}', true, NOW(), NOW()),
-  ('00000000-0000-0000-0001-000000000003', NULL, 'FAST4', '{"bestOfSets": 3, "gamesToWin": 4, "winBy": 1, "tiebreakAt": 3, "tiebreakPointsToWin": 5}', true, NOW(), NOW()),
-  ('00000000-0000-0000-0001-000000000004', NULL, 'Pro Set', '{"bestOfSets": 1, "gamesToWin": 8, "winBy": 2, "tiebreakAt": 8, "tiebreakPointsToWin": 7}', true, NOW(), NOW())
+  ('00000000-0000-0000-0000-000000000001', NULL, 'Best of 3 Sets', '{"bestOfSets": 3, "gamesToWin": 6, "winBy": 2, "tiebreakAt": 6, "tiebreakPointsToWin": 7}', true, NOW(), NOW()),
+  ('00000000-0000-0000-0000-000000000002', NULL, 'Match Tiebreak', '{"bestOfSets": 1, "gamesToWin": 6, "winBy": 2, "tiebreakAt": 6, "tiebreakPointsToWin": 10, "matchTiebreakInsteadOfFinalSet": true}', true, NOW(), NOW()),
+  ('00000000-0000-0000-0000-000000000003', NULL, 'FAST4', '{"bestOfSets": 3, "gamesToWin": 4, "winBy": 1, "tiebreakAt": 3, "tiebreakPointsToWin": 5}', true, NOW(), NOW()),
+  ('00000000-0000-0000-0000-000000000004', NULL, 'Pro Set', '{"bestOfSets": 1, "gamesToWin": 8, "winBy": 2, "tiebreakAt": 8, "tiebreakPointsToWin": 7}', true, NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
 -- ==================== Users ====================

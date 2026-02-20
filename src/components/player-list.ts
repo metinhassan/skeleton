@@ -23,6 +23,8 @@ export interface PlayerListOptions {
 }
 
 type TabType = 'players' | 'teams';
+type SortField = 'name' | 'email';
+type SortDirection = 'asc' | 'desc';
 
 export class PlayerList {
   private container: HTMLElement;
@@ -40,6 +42,8 @@ export class PlayerList {
   private activeTab: TabType = 'players';
   private searchQuery = '';
   private searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  private sortField: SortField = 'name';
+  private sortDirection: SortDirection = 'asc';
 
   constructor(options: PlayerListOptions) {
     this.container = options.container;
@@ -181,20 +185,26 @@ export class PlayerList {
       `;
     }
 
+    const sortedPlayers = this.getSortedPlayers(filteredPlayers);
+
     return `
       <div class="player-table">
         <table style="width: 100%;">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Email</th>
+              <th class="sortable-header" data-sort="name">
+                Name ${this.renderSortIndicator('name')}
+              </th>
+              <th class="sortable-header" data-sort="email">
+                Email ${this.renderSortIndicator('email')}
+              </th>
               <th>Phone</th>
               <th>Status</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            ${filteredPlayers.map(player => this.renderPlayerRow(player)).join('')}
+            ${sortedPlayers.map(player => this.renderPlayerRow(player)).join('')}
           </tbody>
         </table>
       </div>
@@ -322,6 +332,15 @@ export class PlayerList {
   }
 
   private bindRowEvents(): void {
+    // Sort headers
+    const sortHeaders = this.container.querySelectorAll('.sortable-header');
+    sortHeaders.forEach(th => {
+      th.addEventListener('click', () => {
+        const field = th.getAttribute('data-sort') as SortField;
+        if (field) this.handleSort(field);
+      });
+    });
+
     // Empty state buttons (inside #player-content, need rebinding after updateContent)
     const emptyAddPlayerBtn = this.container.querySelector('#empty-add-player-btn');
     if (emptyAddPlayerBtn) {
@@ -384,6 +403,44 @@ export class PlayerList {
         }
       });
     });
+  }
+
+  private renderSortIndicator(field: SortField): string {
+    if (this.sortField !== field) {
+      return '<span class="sort-indicator">⇅</span>';
+    }
+    return this.sortDirection === 'asc'
+      ? '<span class="sort-indicator sort-indicator--active">↑</span>'
+      : '<span class="sort-indicator sort-indicator--active">↓</span>';
+  }
+
+  private getSortedPlayers(players: Player[]): Player[] {
+    return [...players].sort((a, b) => {
+      let aVal: string;
+      let bVal: string;
+
+      if (this.sortField === 'name') {
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+      } else {
+        aVal = (a.email || '').toLowerCase();
+        bVal = (b.email || '').toLowerCase();
+      }
+
+      if (aVal < bVal) return this.sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return this.sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
+
+  private handleSort(field: SortField): void {
+    if (this.sortField === field) {
+      this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      this.sortField = field;
+      this.sortDirection = 'asc';
+    }
+    this.updateContent();
   }
 
   private handleSearch(query: string): void {

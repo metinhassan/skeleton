@@ -12,9 +12,15 @@ import type {
 import type { CompetitionFormat } from '../types/competition.js';
 import { toast } from './toast.js';
 
+interface ScoringRuleOption {
+  id: string;
+  name: string;
+}
+
 export interface DivisionFormOptions {
   mode: 'create' | 'edit';
   competitionId: string;
+  clubId: string;
   competitionFormat: CompetitionFormat;
   division?: Division;
   onSuccess?: (division: Division) => void;
@@ -28,6 +34,7 @@ interface FormErrors {
 export class DivisionForm {
   private mode: 'create' | 'edit';
   private competitionId: string;
+  private clubId: string;
   private competitionFormat: CompetitionFormat;
   private division?: Division;
   private onSuccess?: (division: Division) => void;
@@ -35,16 +42,19 @@ export class DivisionForm {
   private overlay: HTMLElement | null = null;
   private isSubmitting = false;
   private errors: FormErrors = {};
+  private scoringRules: ScoringRuleOption[] = [];
 
   constructor(options: DivisionFormOptions) {
     this.mode = options.mode;
     this.competitionId = options.competitionId;
+    this.clubId = options.clubId;
     this.competitionFormat = options.competitionFormat;
     this.division = options.division;
     this.onSuccess = options.onSuccess;
     this.onCancel = options.onCancel;
 
     this.render();
+    this.loadScoringRules();
   }
 
   private render(): void {
@@ -101,10 +111,6 @@ export class DivisionForm {
             <label class="form-label" for="div-scoring">Scoring Rule</label>
             <select id="div-scoring" class="form-select">
               <option value="">Default</option>
-              <option value="best_of_3" ${div?.scoringRuleId === 'best_of_3' ? 'selected' : ''}>Best of 3 sets</option>
-              <option value="best_of_5" ${div?.scoringRuleId === 'best_of_5' ? 'selected' : ''}>Best of 5 sets</option>
-              <option value="pro_set" ${div?.scoringRuleId === 'pro_set' ? 'selected' : ''}>Pro set (first to 8)</option>
-              <option value="tiebreak_set" ${div?.scoringRuleId === 'tiebreak_set' ? 'selected' : ''}>Tiebreak set (first to 10)</option>
             </select>
             <div class="form-hint">Optional: Override the default scoring rules</div>
           </div>
@@ -150,6 +156,42 @@ export class DivisionForm {
 
     // ESC key to close
     document.addEventListener('keydown', this.handleKeyDown);
+  }
+
+  private async loadScoringRules(): Promise<void> {
+    try {
+      const response = await fetch(`/api/clubs/${this.clubId}/scoring-rules`, {
+        credentials: 'include',
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const seen = new Set<string>();
+      this.scoringRules = (data.rules || [])
+        .map((r: any) => ({ id: r.id, name: r.name as string }))
+        .filter((r: ScoringRuleOption) => {
+          if (seen.has(r.name)) return false;
+          seen.add(r.name);
+          return true;
+        });
+      this.populateScoringRules();
+    } catch {
+      // Scoring rules are optional, keep the default-only dropdown
+    }
+  }
+
+  private populateScoringRules(): void {
+    const select = this.overlay?.querySelector('#div-scoring') as HTMLSelectElement;
+    if (!select) return;
+
+    for (const rule of this.scoringRules) {
+      const option = document.createElement('option');
+      option.value = rule.id;
+      option.textContent = rule.name;
+      if (this.division?.scoringRuleId === rule.id) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    }
   }
 
   private handleKeyDown = (e: KeyboardEvent): void => {

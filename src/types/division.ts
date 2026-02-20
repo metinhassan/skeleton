@@ -12,6 +12,7 @@ export interface Division {
   name: string;
   format: CompetitionFormat | null;
   scoringRuleId: string | null;
+  scoringRuleName: string | null;
   sortOrder: number;
   entryCount: number;
   drawStatus: DrawStatus;

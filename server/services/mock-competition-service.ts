@@ -551,6 +551,7 @@ export class MockCompetitionService implements CompetitionService {
       name: row.name,
       format: row.format,
       scoringRuleId: row.scoring_rule_id,
+      scoringRuleName: null,
       sortOrder: row.sort_order,
       entryCount: row.entry_count || 0,
       drawStatus,
