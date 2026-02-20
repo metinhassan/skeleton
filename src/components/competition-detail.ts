@@ -853,12 +853,20 @@ export class CompetitionDetail {
         credentials: 'include',
       });
 
-      if (!response.ok) {
+      if (!response.ok && /^[0-9a-f-]{36}$/.test(this.competitionSlug)) {
+        // Fallback: treat as competition ID
+        const idResponse = await fetch(`/api/clubs/${this.clubId}/competitions/${this.competitionSlug}`, {
+          credentials: 'include',
+        });
+        if (!idResponse.ok) throw new Error('Failed to fetch competition');
+        const data: CompetitionResponse = await idResponse.json();
+        this.competition = data.competition;
+      } else if (!response.ok) {
         throw new Error('Failed to fetch competition');
+      } else {
+        const data: CompetitionResponse = await response.json();
+        this.competition = data.competition;
       }
-
-      const data: CompetitionResponse = await response.json();
-      this.competition = data.competition;
 
       // Fetch pending entries count for the badge
       await this.fetchPendingEntriesCount();

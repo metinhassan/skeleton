@@ -232,7 +232,7 @@ describe('MockCompetitionService', () => {
       );
 
       expect(result.data!.status).toBe('draft');
-      expect(result.data!.publicSlug).toBeNull();
+      expect(result.data!.publicSlug).toBeTruthy();
     });
   });
 

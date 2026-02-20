@@ -178,25 +178,8 @@ export class CompetitionForm {
           <option value="self_registration" ${comp.registrationMode === 'self_registration' ? 'selected' : ''}>
             Self Registration
           </option>
-          <option value="both" ${comp.registrationMode === 'both' ? 'selected' : ''}>
-            Both
-          </option>
         </select>
         <div class="form-hint">How players can be added to this competition</div>
-      </div>
-
-      <div class="form-row" id="approval-row" ${comp.registrationMode === 'organizer_only' ? 'hidden' : ''}>
-        <div class="toggle-group">
-          <label class="toggle">
-            <input
-              type="checkbox"
-              id="comp-requires-approval"
-              ${comp.requiresApproval ? 'checked' : ''}
-            />
-            <span class="toggle__slider"></span>
-          </label>
-          <span class="toggle__label">Require approval for self-registrations</span>
-        </div>
       </div>
 
       <div class="form-row" id="deadline-row" ${comp.registrationMode === 'organizer_only' ? 'hidden' : ''}>
@@ -244,11 +227,7 @@ export class CompetitionForm {
     if (registrationModeSelect) {
       registrationModeSelect.addEventListener('change', (e) => {
         const value = (e.target as HTMLSelectElement).value;
-        const approvalRow = this.overlay?.querySelector('#approval-row');
         const deadlineRow = this.overlay?.querySelector('#deadline-row');
-        if (approvalRow) {
-          approvalRow.toggleAttribute('hidden', value === 'organizer_only');
-        }
         if (deadlineRow) {
           deadlineRow.toggleAttribute('hidden', value === 'organizer_only');
         }
@@ -424,17 +403,11 @@ export class CompetitionForm {
       const registrationModeSelect = this.overlay?.querySelector(
         '#comp-registration-mode'
       ) as HTMLSelectElement;
-      const requiresApprovalCheckbox = this.overlay?.querySelector(
-        '#comp-requires-approval'
-      ) as HTMLInputElement;
       const deadlineInput = this.overlay?.querySelector('#comp-deadline') as HTMLInputElement;
 
       if (registrationModeSelect) {
         (data as UpdateCompetitionData).registrationMode =
           registrationModeSelect.value as RegistrationMode;
-      }
-      if (requiresApprovalCheckbox) {
-        (data as UpdateCompetitionData).requiresApproval = requiresApprovalCheckbox.checked;
       }
       if (deadlineInput?.value) {
         (data as UpdateCompetitionData).registrationDeadline = deadlineInput.value;

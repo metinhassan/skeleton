@@ -2998,7 +2998,50 @@ import type { StartMatchInput, RecordPointInput, PauseMatchInput, AbandonMatchIn
 import type { LiveEvent, MatchStartedData, ScoreChangeData, MatchPausedData, MatchResumedData, MatchCompletedData, MatchAbandonedData } from './services/live-events-service.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// Extend request to include match context
+// Helper to resolve match metadata (entry names, competition name, court, etc.)
+async function getMatchMetadata(matchId: string) {
+  const drawService = getDrawService();
+  const competitionService = getCompetitionService();
+  const match = await drawService.getMatch(matchId);
+  if (!match) return null;
+
+  const db = (await import('./db/database.js')).getDatabase();
+
+  // Resolve entry names
+  const nameRow = db.prepare(`
+    SELECT COALESCE(p1.name, t1.name) as entry1_name,
+           COALESCE(p2.name, t2.name) as entry2_name
+    FROM matches m
+    LEFT JOIN entries e1 ON e1.id = m.entry1_id
+    LEFT JOIN players p1 ON p1.id = e1.player_id
+    LEFT JOIN teams t1 ON t1.id = e1.team_id
+    LEFT JOIN entries e2 ON e2.id = m.entry2_id
+    LEFT JOIN players p2 ON p2.id = e2.player_id
+    LEFT JOIN teams t2 ON t2.id = e2.team_id
+    WHERE m.id = ?
+  `).get(matchId) as { entry1_name: string | null; entry2_name: string | null } | undefined;
+
+  // Trace to competition: match → draw → division → competition
+  const drawRow = db.prepare('SELECT division_id FROM draws WHERE id = ?').get(match.drawId) as { division_id: string } | undefined;
+  let competitionName = 'Match';
+  if (drawRow) {
+    const divRow = db.prepare('SELECT competition_id FROM divisions WHERE id = ?').get(drawRow.division_id) as { competition_id: string } | undefined;
+    if (divRow) {
+      const comp = await competitionService.getCompetition(divRow.competition_id);
+      if (comp) competitionName = comp.name;
+    }
+  }
+
+  return {
+    id: matchId,
+    entry1Name: nameRow?.entry1_name || 'Player 1',
+    entry2Name: nameRow?.entry2_name || 'Player 2',
+    court: match.court || null,
+    scheduledTime: match.scheduledTime || null,
+    competitionName,
+  };
+}
+
 /**
  * GET /api/matches/:matchId/live-score - Get current live score
  */
@@ -3013,7 +3056,8 @@ app.get('/api/matches/:matchId/live-score', requireAuth as any, requireMatchOrga
     }
 
     const displayScore = await liveScoreService.getDisplayScore(req.matchId!);
-    res.json({ score, displayScore });
+    const matchMeta = await getMatchMetadata(req.matchId!);
+    res.json({ score, displayScore, match: matchMeta });
   } catch (error) {
     console.error('Get live score error:', error);
     res.status(500).json({ error: 'Failed to get live score' });
@@ -3472,7 +3516,7 @@ app.get('/api/public/live/competitions/:slug', async (req: Request, res: Respons
       })
     );
 
-    res.json({ competition: { id: competition.id, name: competition.name }, matches });
+    res.json({ competition: { id: competition.id, name: competition.name }, liveMatches: matches });
   } catch (error) {
     console.error('Get public live matches error:', error);
     res.status(500).json({ error: 'Failed to get live matches' });
@@ -3517,8 +3561,9 @@ app.get('/api/public/live/matches/:matchId', async (req: Request, res: Response)
     const liveScoreService = getLiveScoreService();
     const score = await liveScoreService.getLiveScore(matchId);
     const displayScore = await liveScoreService.getDisplayScore(matchId);
+    const matchMeta = await getMatchMetadata(matchId);
 
-    res.json({ score, displayScore });
+    res.json({ score, displayScore, match: matchMeta });
   } catch (error) {
     console.error('Get public live score error:', error);
     res.status(500).json({ error: 'Failed to get live score' });
