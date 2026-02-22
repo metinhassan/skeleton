@@ -27,15 +27,16 @@ Right now, adding many players to competition divisions requires repeated per-en
 - When `Select Players` is clicked:
   - Component enters selection mode.
   - Button label changes to `Cancel Selection`.
-  - Row checkboxes appear (left-most column).
+  - Table rows become tap/click selectable.
   - Edit/Delete row actions are hidden or disabled to reduce accidental clicks.
 
 ### 2. Row Selection Behavior
-- Clicking a row checkbox toggles selection.
-- Clicking a selected row again unselects it.
+- Clicking/tapping anywhere on a row toggles selection.
+- Clicking/tapping a selected row again unselects it.
 - Selected rows receive a distinct highlight style.
 - Selection persists through local sort/search changes while player remains visible in dataset.
 - If selection mode is cancelled, selected set is cleared.
+- Hover state remains subtle and distinct from selected state.
 
 ### 3. Secondary CTA
 - Show CTA `Add players to comp` only when `selectedCount > 0`.
@@ -96,7 +97,9 @@ Right now, adding many players to competition divisions requires repeated per-en
   - Show spinner text `Adding...`.
 
 ## Accessibility
-- Selection toggle and checkboxes keyboard reachable.
+- Selection mode toggle and row selection are keyboard reachable.
+- In selection mode, rows should expose selected state (`aria-selected` where appropriate).
+- `Enter`/`Space` on a focused row should toggle selection.
 - Row highlight must maintain contrast.
 - Modal follows existing overlay semantics (`Esc` closes unless submitting).
 - Toast copy should be concise and announce meaningful status.

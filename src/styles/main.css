@@ -2947,6 +2947,32 @@ body {
   font-size: 0.75rem;
 }
 
+/* Selection Mode */
+.player-table--selection-mode tbody tr {
+  cursor: pointer;
+}
+
+.player-table tbody tr.player-row--selected {
+  background-color: rgba(59, 130, 246, 0.08);
+}
+
+.player-table tbody tr.player-row--selected:hover {
+  background-color: rgba(59, 130, 246, 0.12);
+}
+
+.player-list__selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
 /* Linked Badge */
 .linked-badge {
   display: inline-flex;

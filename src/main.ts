@@ -19,6 +19,7 @@ import { CompetitionDetail } from './components/competition-detail.js';
 import { PlayerList } from './components/player-list.js';
 import { PlayerForm } from './components/player-form.js';
 import { TeamForm } from './components/team-form.js';
+import { BulkAddPlayersModal } from './components/bulk-add-players-modal.js';
 import type { Player, Team } from './types/player.js';
 import { toast } from './components/toast.js';
 
@@ -799,6 +800,7 @@ class App {
       onCreateTeam: () => this.showCreateTeam(),
       onEditTeam: (team) => this.handleEditTeam(team),
       onDeleteTeam: (team) => this.handleDeleteTeam(team),
+      onBulkAddPlayers: (playerIds) => this.handleBulkAddPlayers(playerIds),
     });
   }
 
@@ -931,6 +933,27 @@ class App {
       console.error('Failed to delete team:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to delete team');
     }
+  }
+
+  /**
+   * Handle bulk add players to competition
+   */
+  private handleBulkAddPlayers(playerIds: string[]): void {
+    const currentClub = clubContext.getContext().currentClub;
+    if (!currentClub) return;
+
+    new BulkAddPlayersModal({
+      clubId: currentClub.id,
+      playerIds,
+      playerCount: playerIds.length,
+      onComplete: () => {
+        this.activePlayerList?.exitSelectionMode();
+        this.activePlayerList?.refresh();
+      },
+      onCancel: () => {
+        // Modal cancelled, stay in selection mode
+      },
+    });
   }
 
   private showProfile(): void {

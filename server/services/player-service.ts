@@ -201,6 +201,11 @@ export type PlayerErrorCode =
 
 export type PlayerResult<T> = PlayerServiceResult<T> | PlayerServiceError;
 
+export interface BulkCreateEntriesResult {
+  created: number;
+  failed: { playerId: string; error: string }[];
+}
+
 export interface PlayerService {
   // Players
   createPlayer(clubId: string, input: CreatePlayerInput): Promise<PlayerResult<Player>>;
@@ -225,6 +230,7 @@ export interface PlayerService {
   updateEntry(entryId: string, input: UpdateEntryInput): Promise<PlayerResult<Entry>>;
   deleteEntry(entryId: string): Promise<PlayerResult<void>>;
   checkPlayerInDivision(divisionId: string, playerId: string): Promise<boolean>;
+  bulkCreateEntries(divisionId: string, playerIds: string[]): Promise<PlayerResult<BulkCreateEntriesResult>>;
 
   // Profile claiming (Epic 4)
   generateClaimToken(playerId: string): Promise<PlayerResult<{ token: string; expiresAt: Date }>>;

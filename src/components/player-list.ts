@@ -20,6 +20,7 @@ export interface PlayerListOptions {
   onCreateTeam?: () => void;
   onEditTeam?: (team: Team) => void;
   onDeleteTeam?: (team: Team) => void;
+  onBulkAddPlayers?: (playerIds: string[]) => void;
 }
 
 type TabType = 'players' | 'teams';
@@ -35,6 +36,7 @@ export class PlayerList {
   private onCreateTeam?: () => void;
   private onEditTeam?: (team: Team) => void;
   private onDeleteTeam?: (team: Team) => void;
+  private onBulkAddPlayers?: (playerIds: string[]) => void;
 
   private players: Player[] = [];
   private teams: Team[] = [];
@@ -44,6 +46,8 @@ export class PlayerList {
   private searchTimeout: ReturnType<typeof setTimeout> | null = null;
   private sortField: SortField = 'name';
   private sortDirection: SortDirection = 'asc';
+  private isSelectionMode = false;
+  private selectedPlayerIds: Set<string> = new Set();
 
   constructor(options: PlayerListOptions) {
     this.container = options.container;
@@ -54,6 +58,7 @@ export class PlayerList {
     this.onCreateTeam = options.onCreateTeam;
     this.onEditTeam = options.onEditTeam;
     this.onDeleteTeam = options.onDeleteTeam;
+    this.onBulkAddPlayers = options.onBulkAddPlayers;
 
     this.render();
     this.fetchPlayers();
@@ -75,27 +80,21 @@ export class PlayerList {
             </div>
           </div>
           <div class="player-list__actions">
-            ${this.activeTab === 'players' ? `
-              <div class="player-search">
-                <span class="player-search__icon">🔍</span>
-                <input
-                  type="text"
-                  class="player-search__input"
-                  placeholder="Search players..."
-                  id="player-search"
-                  value="${this.escapeHtml(this.searchQuery)}"
-                />
-              </div>
-              <button class="btn btn-primary" id="add-player-btn">
-                + Add Player
-              </button>
-            ` : `
+            ${this.activeTab === 'players' ? this.renderPlayerActions() : `
               <button class="btn btn-primary" id="create-team-btn">
                 + Create Team
               </button>
             `}
           </div>
         </div>
+        ${this.isSelectionMode ? `
+          <div class="player-list__selection-bar">
+            <span>${this.selectedPlayerIds.size} player${this.selectedPlayerIds.size !== 1 ? 's' : ''} selected</span>
+            <button class="btn btn-primary" id="bulk-add-btn" ${this.selectedPlayerIds.size === 0 ? 'disabled' : ''}>
+              Add to competition${this.selectedPlayerIds.size > 0 ? ` (${this.selectedPlayerIds.size})` : ''}
+            </button>
+          </div>
+        ` : ''}
         <div id="player-content">
           ${this.isLoading ? this.renderSkeleton() : this.renderContent()}
         </div>
@@ -103,6 +102,47 @@ export class PlayerList {
     `;
 
     this.bindEvents();
+  }
+
+  private renderPlayerActions(): string {
+    if (this.isSelectionMode) {
+      return `
+        <div class="player-search">
+          <span class="player-search__icon">&#128269;</span>
+          <input
+            type="text"
+            class="player-search__input"
+            placeholder="Search players..."
+            id="player-search"
+            value="${this.escapeHtml(this.searchQuery)}"
+          />
+        </div>
+        <button class="btn btn-outline" id="cancel-selection-btn">
+          Cancel Selection
+        </button>
+      `;
+    }
+
+    return `
+      <div class="player-search">
+        <span class="player-search__icon">&#128269;</span>
+        <input
+          type="text"
+          class="player-search__input"
+          placeholder="Search players..."
+          id="player-search"
+          value="${this.escapeHtml(this.searchQuery)}"
+        />
+      </div>
+      ${this.onBulkAddPlayers ? `
+        <button class="btn btn-outline" id="select-players-btn">
+          Select Players
+        </button>
+      ` : ''}
+      <button class="btn btn-primary" id="add-player-btn">
+        + Add Player
+      </button>
+    `;
   }
 
   private renderSkeleton(): string {
@@ -162,7 +202,7 @@ export class PlayerList {
       if (this.searchQuery) {
         return `
           <div class="player-empty">
-            <div class="player-empty__icon">🔍</div>
+            <div class="player-empty__icon">&#128269;</div>
             <h3 class="player-empty__title">No players found</h3>
             <p class="player-empty__description">
               No players match "${this.escapeHtml(this.searchQuery)}". Try a different search.
@@ -173,7 +213,7 @@ export class PlayerList {
 
       return `
         <div class="player-empty">
-          <div class="player-empty__icon">👥</div>
+          <div class="player-empty__icon">&#128101;</div>
           <h3 class="player-empty__title">No players yet</h3>
           <p class="player-empty__description">
             Add players to your club roster so they can be entered into competitions.
@@ -186,9 +226,10 @@ export class PlayerList {
     }
 
     const sortedPlayers = this.getSortedPlayers(filteredPlayers);
+    const tableClass = this.isSelectionMode ? 'player-table player-table--selection-mode' : 'player-table';
 
     return `
-      <div class="player-table">
+      <div class="${tableClass}">
         <table style="width: 100%;">
           <thead>
             <tr>
@@ -200,7 +241,7 @@ export class PlayerList {
               </th>
               <th>Phone</th>
               <th>Status</th>
-              <th></th>
+              ${this.isSelectionMode ? '' : '<th></th>'}
             </tr>
           </thead>
           <tbody>
@@ -212,6 +253,24 @@ export class PlayerList {
   }
 
   private renderPlayerRow(player: Player): string {
+    const isSelected = this.selectedPlayerIds.has(player.id);
+
+    if (this.isSelectionMode) {
+      return `
+        <tr data-player-id="${player.id}" class="${isSelected ? 'player-row--selected' : ''}" aria-selected="${isSelected}" tabindex="0">
+          <td class="player-table__name">${this.escapeHtml(player.name)}</td>
+          <td class="player-table__email">${player.email ? this.escapeHtml(player.email) : '-'}</td>
+          <td class="player-table__phone">${player.phone ? this.escapeHtml(player.phone) : '-'}</td>
+          <td>
+            ${player.userId
+              ? '<span class="linked-badge linked-badge--linked">Linked</span>'
+              : '<span class="linked-badge linked-badge--unlinked">Unlinked</span>'
+            }
+          </td>
+        </tr>
+      `;
+    }
+
     return `
       <tr data-player-id="${player.id}">
         <td class="player-table__name">${this.escapeHtml(player.name)}</td>
@@ -235,7 +294,7 @@ export class PlayerList {
     if (this.teams.length === 0) {
       return `
         <div class="player-empty">
-          <div class="player-empty__icon">👫</div>
+          <div class="player-empty__icon">&#128107;</div>
           <h3 class="player-empty__title">No teams yet</h3>
           <p class="player-empty__description">
             Create doubles teams by pairing two players together.
@@ -287,6 +346,10 @@ export class PlayerList {
         const tab = btn.getAttribute('data-tab') as TabType;
         if (tab !== this.activeTab) {
           this.activeTab = tab;
+          if (this.isSelectionMode) {
+            this.isSelectionMode = false;
+            this.selectedPlayerIds.clear();
+          }
           if (tab === 'teams' && this.teams.length === 0) {
             this.fetchTeams();
           }
@@ -328,6 +391,36 @@ export class PlayerList {
       emptyCreateTeamBtn.addEventListener('click', () => this.onCreateTeam?.());
     }
 
+    // Select players button
+    const selectPlayersBtn = this.container.querySelector('#select-players-btn');
+    if (selectPlayersBtn) {
+      selectPlayersBtn.addEventListener('click', () => {
+        this.isSelectionMode = true;
+        this.selectedPlayerIds.clear();
+        this.render();
+      });
+    }
+
+    // Cancel selection button
+    const cancelSelectionBtn = this.container.querySelector('#cancel-selection-btn');
+    if (cancelSelectionBtn) {
+      cancelSelectionBtn.addEventListener('click', () => {
+        this.isSelectionMode = false;
+        this.selectedPlayerIds.clear();
+        this.render();
+      });
+    }
+
+    // Bulk add button
+    const bulkAddBtn = this.container.querySelector('#bulk-add-btn');
+    if (bulkAddBtn) {
+      bulkAddBtn.addEventListener('click', () => {
+        if (this.selectedPlayerIds.size > 0) {
+          this.onBulkAddPlayers?.(Array.from(this.selectedPlayerIds));
+        }
+      });
+    }
+
     this.bindRowEvents();
   }
 
@@ -352,31 +445,48 @@ export class PlayerList {
       emptyCreateTeamBtn.addEventListener('click', () => this.onCreateTeam?.());
     }
 
-    // Edit player buttons
-    const editPlayerBtns = this.container.querySelectorAll('.edit-player-btn');
-    editPlayerBtns.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.getAttribute('data-player-id');
-        const player = this.players.find(p => p.id === id);
-        if (player) {
-          this.onEditPlayer?.(player);
-        }
+    if (this.isSelectionMode) {
+      // Selection mode: row clicks toggle selection
+      const rows = this.container.querySelectorAll('tr[data-player-id]');
+      rows.forEach(row => {
+        row.addEventListener('click', () => {
+          const id = row.getAttribute('data-player-id');
+          if (id) this.toggleSelection(id);
+        });
+        row.addEventListener('keydown', (e) => {
+          if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
+            e.preventDefault();
+            const id = row.getAttribute('data-player-id');
+            if (id) this.toggleSelection(id);
+          }
+        });
       });
-    });
+    } else {
+      // Normal mode: edit/delete buttons
+      const editPlayerBtns = this.container.querySelectorAll('.edit-player-btn');
+      editPlayerBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-player-id');
+          const player = this.players.find(p => p.id === id);
+          if (player) {
+            this.onEditPlayer?.(player);
+          }
+        });
+      });
 
-    // Delete player buttons
-    const deletePlayerBtns = this.container.querySelectorAll('.delete-player-btn');
-    deletePlayerBtns.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.getAttribute('data-player-id');
-        const player = this.players.find(p => p.id === id);
-        if (player) {
-          this.onDeletePlayer?.(player);
-        }
+      const deletePlayerBtns = this.container.querySelectorAll('.delete-player-btn');
+      deletePlayerBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-player-id');
+          const player = this.players.find(p => p.id === id);
+          if (player) {
+            this.onDeletePlayer?.(player);
+          }
+        });
       });
-    });
+    }
 
     // Edit team buttons
     const editTeamBtns = this.container.querySelectorAll('.edit-team-btn');
@@ -405,13 +515,28 @@ export class PlayerList {
     });
   }
 
+  private toggleSelection(playerId: string): void {
+    if (this.selectedPlayerIds.has(playerId)) {
+      this.selectedPlayerIds.delete(playerId);
+    } else {
+      this.selectedPlayerIds.add(playerId);
+    }
+    this.render();
+  }
+
+  exitSelectionMode(): void {
+    this.isSelectionMode = false;
+    this.selectedPlayerIds.clear();
+    this.render();
+  }
+
   private renderSortIndicator(field: SortField): string {
     if (this.sortField !== field) {
-      return '<span class="sort-indicator">⇅</span>';
+      return '<span class="sort-indicator">&#8693;</span>';
     }
     return this.sortDirection === 'asc'
-      ? '<span class="sort-indicator sort-indicator--active">↑</span>'
-      : '<span class="sort-indicator sort-indicator--active">↓</span>';
+      ? '<span class="sort-indicator sort-indicator--active">&#8593;</span>'
+      : '<span class="sort-indicator sort-indicator--active">&#8595;</span>';
   }
 
   private getSortedPlayers(players: Player[]): Player[] {
@@ -521,6 +646,18 @@ export class PlayerList {
     if (contentEl) {
       contentEl.innerHTML = this.isLoading ? this.renderSkeleton() : this.renderContent();
       this.bindRowEvents();
+    }
+
+    // Update the selection bar text and button state
+    const selectionBar = this.container.querySelector('.player-list__selection-bar');
+    if (selectionBar && this.isSelectionMode) {
+      const count = this.selectedPlayerIds.size;
+      selectionBar.querySelector('span')!.textContent = `${count} player${count !== 1 ? 's' : ''} selected`;
+      const bulkBtn = selectionBar.querySelector('#bulk-add-btn') as HTMLButtonElement;
+      if (bulkBtn) {
+        bulkBtn.disabled = count === 0;
+        bulkBtn.textContent = count > 0 ? `Add to competition (${count})` : 'Add to competition';
+      }
     }
   }
 

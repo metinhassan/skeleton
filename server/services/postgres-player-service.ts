@@ -29,6 +29,7 @@ import type {
   PartnerRequestWithDetails,
   MatchWithDetails,
   PlayerDashboard,
+  BulkCreateEntriesResult,
 } from './player-service.js';
 
 interface DbPlayer {
@@ -663,6 +664,70 @@ export class PostgresPlayerService implements PlayerService {
     );
 
     return doublesResult.rows.length > 0;
+  }
+
+  async bulkCreateEntries(divisionId: string, playerIds: string[]): Promise<PlayerResult<BulkCreateEntriesResult>> {
+    const pool = getPool();
+
+    // Validate division exists
+    const divisionResult = await pool.query<{ id: string }>(
+      'SELECT id FROM divisions WHERE id = $1',
+      [divisionId]
+    );
+
+    if (divisionResult.rows.length === 0) {
+      return { success: false, error: 'division_not_found', message: 'Division not found' };
+    }
+
+    const created: number[] = [];
+    const failed: { playerId: string; error: string }[] = [];
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      for (const playerId of playerIds) {
+        // Check player exists
+        const playerResult = await client.query<{ id: string }>(
+          'SELECT id FROM players WHERE id = $1',
+          [playerId]
+        );
+
+        if (playerResult.rows.length === 0) {
+          failed.push({ playerId, error: 'Player not found' });
+          continue;
+        }
+
+        // Check player not already in division
+        const existingResult = await client.query<{ id: string }>(
+          'SELECT id FROM entries WHERE division_id = $1 AND player_id = $2',
+          [divisionId, playerId]
+        );
+
+        if (existingResult.rows.length > 0) {
+          failed.push({ playerId, error: 'Already entered in this division' });
+          continue;
+        }
+
+        const id = uuidv4();
+        await client.query(
+          `INSERT INTO entries (id, division_id, entry_type, player_id, seed, status)
+           VALUES ($1, $2, 'singles', $3, NULL, 'approved')`,
+          [id, divisionId, playerId]
+        );
+        created.push(1);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Failed to bulk create entries:', error);
+      return { success: false, error: 'operation_failed', message: 'Failed to bulk create entries' };
+    } finally {
+      client.release();
+    }
+
+    return { success: true, data: { created: created.length, failed } };
   }
 
   // ==================== Private Helpers ====================

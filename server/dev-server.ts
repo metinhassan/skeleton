@@ -1797,6 +1797,33 @@ app.post('/api/divisions/:divisionId/entries', requireAuth as any, requireDivisi
 });
 
 /**
+ * POST /api/divisions/:divisionId/entries/bulk - Bulk add singles entries
+ */
+app.post('/api/divisions/:divisionId/entries/bulk', requireAuth as any, requireDivisionOrganiser as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { playerIds } = req.body;
+
+    if (!Array.isArray(playerIds) || playerIds.length === 0) {
+      res.status(400).json({ error: 'playerIds array is required' });
+      return;
+    }
+
+    const playerService = getPlayerService();
+    const result = await playerService.bulkCreateEntries(req.divisionId!, playerIds);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.status(201).json({ created: result.data.created, failed: result.data.failed });
+  } catch (error) {
+    console.error('Bulk create entries error:', error);
+    res.status(500).json({ error: 'Failed to bulk create entries' });
+  }
+});
+
+/**
  * GET /api/divisions/:divisionId/entries - List entries
  */
 app.get('/api/divisions/:divisionId/entries', requireAuth as any, requireDivisionAccess as any, async (req: DivisionRequest, res: Response) => {

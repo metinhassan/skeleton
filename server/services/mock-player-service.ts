@@ -29,6 +29,7 @@ import type {
   PartnerRequestWithDetails,
   MatchWithDetails,
   PlayerDashboard,
+  BulkCreateEntriesResult,
 } from './player-service.js';
 
 interface DbPlayer {
@@ -682,6 +683,64 @@ export class MockPlayerService implements PlayerService {
       .get(divisionId, playerId, playerId) as { id: string } | undefined;
 
     return !!doublesEntry;
+  }
+
+  async bulkCreateEntries(divisionId: string, playerIds: string[]): Promise<PlayerResult<BulkCreateEntriesResult>> {
+    const db = getDatabase();
+
+    // Validate division exists
+    const division = db
+      .prepare('SELECT id FROM divisions WHERE id = ?')
+      .get(divisionId) as { id: string } | undefined;
+
+    if (!division) {
+      return { success: false, error: 'division_not_found', message: 'Division not found' };
+    }
+
+    const failed: { playerId: string; error: string }[] = [];
+    let createdCount = 0;
+    const now = new Date().toISOString();
+
+    const insertStmt = db.prepare(`
+      INSERT INTO entries (id, division_id, entry_type, player_id, team_id, seed, status, created_at, updated_at)
+      VALUES (?, ?, 'singles', ?, NULL, NULL, 'approved', ?, ?)
+    `);
+
+    const transaction = db.transaction(() => {
+      for (const playerId of playerIds) {
+        // Check player exists
+        const player = db
+          .prepare('SELECT id FROM players WHERE id = ?')
+          .get(playerId) as { id: string } | undefined;
+
+        if (!player) {
+          failed.push({ playerId, error: 'Player not found' });
+          continue;
+        }
+
+        // Check player not already in division
+        const existing = db
+          .prepare('SELECT id FROM entries WHERE division_id = ? AND player_id = ?')
+          .get(divisionId, playerId) as { id: string } | undefined;
+
+        if (existing) {
+          failed.push({ playerId, error: 'Already entered in this division' });
+          continue;
+        }
+
+        const id = uuidv4();
+        insertStmt.run(id, divisionId, playerId, now, now);
+        createdCount++;
+      }
+    });
+
+    try {
+      transaction();
+      return { success: true, data: { created: createdCount, failed } };
+    } catch (error) {
+      console.error('Failed to bulk create entries:', error);
+      return { success: false, error: 'operation_failed', message: 'Failed to bulk create entries' };
+    }
   }
 
   // ==================== Private Helpers ====================
