@@ -26,11 +26,14 @@ export interface Draw {
   updatedAt: Date;
 }
 
+export type BracketType = 'winners' | 'losers' | 'grand_final';
+
 export interface Match {
   id: string;
   drawId: string;
   roundNumber: number;
   matchNumber: number;
+  bracket: BracketType;
   entry1Id: string | null;
   entry2Id: string | null;
   winnerEntryId: string | null;
@@ -40,6 +43,8 @@ export interface Match {
   court: string | null;
   sourceMatch1Id: string | null;
   sourceMatch2Id: string | null;
+  loserNextMatchId: string | null;
+  loserSlot: 1 | 2 | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -87,6 +92,9 @@ export interface MatchSeed {
   sourceMatch1Num?: number;
   sourceMatch2Num?: number;
   isBye?: boolean;
+  bracket?: BracketType;
+  loserNextMatchNum?: number;
+  loserSlot?: 1 | 2;
 }
 
 export interface DrawServiceResult<T> {

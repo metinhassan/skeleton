@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS matches (
   draw_id TEXT NOT NULL REFERENCES draws(id),
   round_number INTEGER NOT NULL,
   match_number INTEGER NOT NULL,
+  bracket TEXT DEFAULT 'winners',
   entry1_id TEXT REFERENCES entries(id),
   entry2_id TEXT REFERENCES entries(id),
   winner_entry_id TEXT REFERENCES entries(id),
@@ -203,9 +204,11 @@ CREATE TABLE IF NOT EXISTS matches (
   court TEXT,
   source_match1_id TEXT REFERENCES matches(id),
   source_match2_id TEXT REFERENCES matches(id),
+  loser_next_match_id TEXT REFERENCES matches(id),
+  loser_slot INTEGER CHECK (loser_slot IS NULL OR loser_slot IN (1, 2)),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(draw_id, round_number, match_number)
+  UNIQUE(draw_id, round_number, match_number, bracket)
 );
 
 -- Round robin standings

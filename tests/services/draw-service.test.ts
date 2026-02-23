@@ -635,4 +635,240 @@ describe('MockDrawService', () => {
       expect(result.data!.status).toBe('scheduled');
     });
   });
+
+  // ==================== Double Elimination Tests ====================
+
+  describe('Double Elimination', () => {
+    describe('Match Generation - 4 entries', () => {
+      it('should generate 6 matches for 4 entries', async () => {
+        const result = await drawService.createDraw(divisionId, { drawType: 'double_elimination' });
+        expect(result.success).toBe(true);
+
+        const matches = await drawService.getDrawMatches(result.data!.id);
+        expect(matches).toHaveLength(6);
+      });
+
+      it('should have correct bracket distribution for 4 entries', async () => {
+        const result = await drawService.createDraw(divisionId, { drawType: 'double_elimination' });
+        const matches = await drawService.getDrawMatches(result.data!.id);
+
+        const wbMatches = matches.filter(m => m.bracket === 'winners');
+        const lbMatches = matches.filter(m => m.bracket === 'losers');
+        const gfMatches = matches.filter(m => m.bracket === 'grand_final');
+
+        expect(wbMatches).toHaveLength(3); // 2 R1 + 1 R2
+        expect(lbMatches).toHaveLength(2); // 1 LB R1 + 1 LB R2
+        expect(gfMatches).toHaveLength(1);
+      });
+    });
+
+    describe('Match Generation - 8 entries', () => {
+      let divisionId8: string;
+      let entryIds8: string[];
+
+      beforeEach(async () => {
+        const divResult = await competitionService.createDivision(competitionId, {
+          name: 'Eight Player Division',
+        });
+        divisionId8 = divResult.data!.id;
+        entryIds8 = [];
+
+        for (let i = 1; i <= 8; i++) {
+          const playerResult = await playerService.createPlayer(clubId, { name: `DE Player ${i}` });
+          const entryResult = await playerService.createEntry(divisionId8, {
+            entryType: 'singles',
+            playerId: playerResult.data!.id,
+            seed: i,
+          });
+          entryIds8.push(entryResult.data!.id);
+        }
+      });
+
+      it('should generate 14 matches for 8 entries', async () => {
+        const result = await drawService.createDraw(divisionId8, { drawType: 'double_elimination' });
+        expect(result.success).toBe(true);
+
+        const matches = await drawService.getDrawMatches(result.data!.id);
+        expect(matches).toHaveLength(14);
+      });
+
+      it('should have correct bracket distribution for 8 entries', async () => {
+        const result = await drawService.createDraw(divisionId8, { drawType: 'double_elimination' });
+        const matches = await drawService.getDrawMatches(result.data!.id);
+
+        const wbMatches = matches.filter(m => m.bracket === 'winners');
+        const lbMatches = matches.filter(m => m.bracket === 'losers');
+        const gfMatches = matches.filter(m => m.bracket === 'grand_final');
+
+        expect(wbMatches).toHaveLength(7); // 4 R1 + 2 R2 + 1 R3
+        expect(lbMatches).toHaveLength(6); // 2 LB R1 + 2 LB R2 + 1 LB R3 + 1 LB R4
+        expect(gfMatches).toHaveLength(1);
+      });
+    });
+
+    describe('Winner advancement and loser routing', () => {
+      it('should advance winner in WB and route loser to LB', async () => {
+        const result = await drawService.createDraw(divisionId, { drawType: 'double_elimination' });
+        await drawService.activateDraw(result.data!.id);
+
+        const matches = await drawService.getDrawMatches(result.data!.id);
+        const wbR1 = matches.filter(m => m.bracket === 'winners' && m.roundNumber === 1 && m.entry1Id && m.entry2Id);
+        expect(wbR1.length).toBeGreaterThan(0);
+
+        const match = wbR1[0];
+        await drawService.recordResult(match.id, {
+          winnerId: match.entry1Id!,
+          score: [[6, 3]],
+          status: 'completed',
+        });
+
+        // Winner should be in WB R2
+        const updatedMatches = await drawService.getDrawMatches(result.data!.id);
+        const wbR2 = updatedMatches.filter(m => m.bracket === 'winners' && m.roundNumber === 2);
+        expect(wbR2.length).toBeGreaterThan(0);
+        const wbR2Entries = wbR2.flatMap(m => [m.entry1Id, m.entry2Id]).filter(Boolean);
+        expect(wbR2Entries).toContain(match.entry1Id);
+
+        // Loser should be in LB
+        const lbMatches = updatedMatches.filter(m => m.bracket === 'losers');
+        const lbEntries = lbMatches.flatMap(m => [m.entry1Id, m.entry2Id]).filter(Boolean);
+        expect(lbEntries).toContain(match.entry2Id);
+      });
+    });
+
+    describe('Full tournament flow - 4 entries', () => {
+      it('should complete a full double elimination tournament', async () => {
+        const result = await drawService.createDraw(divisionId, { drawType: 'double_elimination' });
+        await drawService.activateDraw(result.data!.id);
+
+        // Play all matches in order
+        let allDone = false;
+        let iterations = 0;
+        while (!allDone && iterations < 20) {
+          iterations++;
+          const matches = await drawService.getDrawMatches(result.data!.id);
+          const playable = matches.find(
+            m => m.status === 'pending' && m.entry1Id && m.entry2Id
+          );
+
+          if (!playable) {
+            allDone = true;
+            break;
+          }
+
+          await drawService.recordResult(playable.id, {
+            winnerId: playable.entry1Id!,
+            score: [[6, 2]],
+            status: 'completed',
+          });
+        }
+
+        const draw = await drawService.getDraw(result.data!.id);
+        expect(draw!.status).toBe('completed');
+
+        // All matches should be completed
+        const finalMatches = await drawService.getDrawMatches(result.data!.id);
+        const pendingMatches = finalMatches.filter(m => m.status === 'pending');
+        expect(pendingMatches).toHaveLength(0);
+      });
+    });
+
+    describe('Bye handling', () => {
+      it('should handle byes with 3 entries', async () => {
+        const divResult = await competitionService.createDivision(competitionId, {
+          name: 'Three Player DE Division',
+        });
+
+        for (let i = 1; i <= 3; i++) {
+          const playerResult = await playerService.createPlayer(clubId, { name: `DE3 Player ${i}` });
+          await playerService.createEntry(divResult.data!.id, {
+            entryType: 'singles',
+            playerId: playerResult.data!.id,
+            seed: i,
+          });
+        }
+
+        const result = await drawService.createDraw(divResult.data!.id, { drawType: 'double_elimination' });
+        expect(result.success).toBe(true);
+
+        const matches = await drawService.getDrawMatches(result.data!.id);
+
+        // Should have WB matches with at least 1 bye (walkover)
+        const walkovers = matches.filter(m => m.status === 'walkover');
+        expect(walkovers.length).toBeGreaterThanOrEqual(1);
+
+        // Total matches = 2*4 - 2 = 6
+        expect(matches).toHaveLength(6);
+      });
+    });
+
+    describe('Clear result', () => {
+      it('should remove loser from LB match when clearing WB result', async () => {
+        const result = await drawService.createDraw(divisionId, { drawType: 'double_elimination' });
+        await drawService.activateDraw(result.data!.id);
+
+        const matches = await drawService.getDrawMatches(result.data!.id);
+        const wbR1 = matches.filter(m => m.bracket === 'winners' && m.roundNumber === 1 && m.entry1Id && m.entry2Id);
+        const match = wbR1[0];
+
+        // Record result - loser goes to LB
+        await drawService.recordResult(match.id, {
+          winnerId: match.entry1Id!,
+          score: [[6, 3]],
+          status: 'completed',
+        });
+
+        // Verify loser is in LB
+        let updatedMatches = await drawService.getDrawMatches(result.data!.id);
+        let lbEntries = updatedMatches.filter(m => m.bracket === 'losers').flatMap(m => [m.entry1Id, m.entry2Id]).filter(Boolean);
+        expect(lbEntries).toContain(match.entry2Id);
+
+        // Clear the result
+        const clearResult = await drawService.clearResult(match.id);
+        expect(clearResult.success).toBe(true);
+
+        // Loser should be removed from LB
+        updatedMatches = await drawService.getDrawMatches(result.data!.id);
+        lbEntries = updatedMatches.filter(m => m.bracket === 'losers').flatMap(m => [m.entry1Id, m.entry2Id]).filter(Boolean);
+        expect(lbEntries).not.toContain(match.entry2Id);
+      });
+
+      it('should block clearing when loser has already played in LB', async () => {
+        const result = await drawService.createDraw(divisionId, { drawType: 'double_elimination' });
+        await drawService.activateDraw(result.data!.id);
+
+        const matches = await drawService.getDrawMatches(result.data!.id);
+        const wbR1 = matches.filter(m => m.bracket === 'winners' && m.roundNumber === 1 && m.entry1Id && m.entry2Id);
+
+        // Record both WB R1 matches so LB R1 gets both entries
+        for (const match of wbR1) {
+          await drawService.recordResult(match.id, {
+            winnerId: match.entry1Id!,
+            score: [[6, 3]],
+            status: 'completed',
+          });
+        }
+
+        // Play the LB R1 match
+        let updatedMatches = await drawService.getDrawMatches(result.data!.id);
+        const lbR1 = updatedMatches.find(
+          m => m.bracket === 'losers' && m.roundNumber === 1 && m.entry1Id && m.entry2Id && m.status === 'pending'
+        );
+
+        if (lbR1) {
+          await drawService.recordResult(lbR1.id, {
+            winnerId: lbR1.entry1Id!,
+            score: [[6, 2]],
+            status: 'completed',
+          });
+
+          // Try to clear a WB R1 match whose loser has already played
+          const wbMatch = wbR1[0];
+          const clearResult = await drawService.clearResult(wbMatch.id);
+          expect(clearResult.success).toBe(false);
+          expect(clearResult.error).toBe('cannot_clear_result');
+        }
+      });
+    });
+  });
 });

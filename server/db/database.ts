@@ -44,25 +44,18 @@ export function closeDatabase(): void {
 }
 
 export function resetDatabase(): void {
-  const database = getDatabase();
-  // Delete in order respecting foreign key constraints
-  database.exec('DELETE FROM match_point_history');
-  database.exec('DELETE FROM match_live_scores');
-  database.exec('DELETE FROM standings');
-  database.exec('DELETE FROM matches');
-  database.exec('DELETE FROM draws');
-  database.exec('DELETE FROM partner_requests');
-  database.exec('DELETE FROM entries');
-  database.exec('DELETE FROM teams');
-  database.exec('DELETE FROM players');
-  database.exec('DELETE FROM divisions');
-  database.exec('DELETE FROM competitions');
-  database.exec('DELETE FROM scoring_rules');
-  database.exec('DELETE FROM audit_log');
-  database.exec('DELETE FROM club_invites');
-  database.exec('DELETE FROM club_members');
-  database.exec('DELETE FROM clubs');
-  database.exec('DELETE FROM users');
+  // Close existing connection and delete the DB file to ensure fresh schema
+  closeDatabase();
+  if (fs.existsSync(DB_PATH)) {
+    fs.unlinkSync(DB_PATH);
+    // Also remove WAL/SHM files if they exist
+    const walPath = DB_PATH + '-wal';
+    const shmPath = DB_PATH + '-shm';
+    if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+    if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+  }
+  // Re-initialize with fresh schema
+  getDatabase();
 }
 
 export function seedScoringPresets(): void {

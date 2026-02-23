@@ -275,6 +275,7 @@ CREATE TABLE IF NOT EXISTS matches (
   draw_id UUID NOT NULL REFERENCES draws(id) ON DELETE CASCADE,
   round_number INTEGER NOT NULL,
   match_number INTEGER NOT NULL,
+  bracket VARCHAR(20) DEFAULT 'winners',
   entry1_id UUID REFERENCES entries(id) ON DELETE SET NULL,
   entry2_id UUID REFERENCES entries(id) ON DELETE SET NULL,
   winner_entry_id UUID REFERENCES entries(id) ON DELETE SET NULL,
@@ -284,9 +285,11 @@ CREATE TABLE IF NOT EXISTS matches (
   court VARCHAR(100),
   source_match1_id UUID REFERENCES matches(id) ON DELETE SET NULL,
   source_match2_id UUID REFERENCES matches(id) ON DELETE SET NULL,
+  loser_next_match_id UUID REFERENCES matches(id) ON DELETE SET NULL,
+  loser_slot SMALLINT CHECK (loser_slot IS NULL OR loser_slot IN (1, 2)),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(draw_id, round_number, match_number)
+  UNIQUE(draw_id, round_number, match_number, bracket)
 );
 
 -- Trigger for matches updated_at

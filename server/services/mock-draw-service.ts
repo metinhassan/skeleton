@@ -20,6 +20,7 @@ import type {
   SetScore,
   MatchSeed,
   DrawConfig,
+  BracketType,
 } from './draw-service.js';
 import type { Entry } from './player-service.js';
 
@@ -38,6 +39,7 @@ interface DbMatch {
   draw_id: string;
   round_number: number;
   match_number: number;
+  bracket: string;
   entry1_id: string | null;
   entry2_id: string | null;
   winner_entry_id: string | null;
@@ -47,6 +49,8 @@ interface DbMatch {
   court: string | null;
   source_match1_id: string | null;
   source_match2_id: string | null;
+  loser_next_match_id: string | null;
+  loser_slot: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -92,6 +96,7 @@ export class MockDrawService implements DrawService {
       drawId: row.draw_id,
       roundNumber: row.round_number,
       matchNumber: row.match_number,
+      bracket: (row.bracket || 'winners') as BracketType,
       entry1Id: row.entry1_id,
       entry2Id: row.entry2_id,
       winnerEntryId: row.winner_entry_id,
@@ -101,6 +106,8 @@ export class MockDrawService implements DrawService {
       court: row.court,
       sourceMatch1Id: row.source_match1_id,
       sourceMatch2Id: row.source_match2_id,
+      loserNextMatchId: row.loser_next_match_id,
+      loserSlot: row.loser_slot as (1 | 2 | null),
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };
@@ -255,6 +262,149 @@ export class MockDrawService implements DrawService {
     return matches;
   }
 
+  private generateDoubleEliminationMatches(entries: DbEntry[]): MatchSeed[] {
+    const n = entries.length;
+    if (n < 2) return [];
+
+    const bracketSize = Math.pow(2, Math.ceil(Math.log2(n)));
+    const totalWBRounds = Math.log2(bracketSize);
+
+    const wbMatches = this.generateSingleEliminationMatches(entries);
+    for (const m of wbMatches) {
+      m.bracket = 'winners';
+    }
+
+    const allMatches: MatchSeed[] = [...wbMatches];
+    let nextMatchNum = wbMatches.length + 1;
+
+    const wbByRound: Map<number, MatchSeed[]> = new Map();
+    for (const m of wbMatches) {
+      if (!wbByRound.has(m.roundNumber)) wbByRound.set(m.roundNumber, []);
+      wbByRound.get(m.roundNumber)!.push(m);
+    }
+
+    const lbByRound: Map<number, MatchSeed[]> = new Map();
+    let lbRoundNum = 1;
+
+    // LB Round 1: WB R1 losers paired together
+    const wbR1 = wbByRound.get(1) || [];
+    const lbR1Matches: MatchSeed[] = [];
+    for (let i = 0; i < wbR1.length; i += 2) {
+      if (i + 1 < wbR1.length) {
+        const m: MatchSeed = {
+          roundNumber: lbRoundNum,
+          matchNumber: nextMatchNum++,
+          entry1Id: null,
+          entry2Id: null,
+          bracket: 'losers',
+        };
+        lbR1Matches.push(m);
+        allMatches.push(m);
+      }
+    }
+    if (wbR1.length === 1) {
+      const m: MatchSeed = {
+        roundNumber: lbRoundNum,
+        matchNumber: nextMatchNum++,
+        entry1Id: null,
+        entry2Id: null,
+        bracket: 'losers',
+      };
+      lbR1Matches.push(m);
+      allMatches.push(m);
+    }
+    lbByRound.set(lbRoundNum, lbR1Matches);
+
+    for (let i = 0; i < wbR1.length; i++) {
+      const lbMatchIdx = Math.floor(i / 2);
+      if (lbMatchIdx < lbR1Matches.length) {
+        wbR1[i].loserNextMatchNum = lbR1Matches[lbMatchIdx].matchNumber;
+        wbR1[i].loserSlot = (i % 2 === 0 ? 1 : 2) as 1 | 2;
+      }
+    }
+
+    let prevLBMatches = lbR1Matches;
+
+    for (let wbRound = 2; wbRound <= totalWBRounds; wbRound++) {
+      const wbLosers = wbByRound.get(wbRound) || [];
+
+      lbRoundNum++;
+      const lbEvenMatches: MatchSeed[] = [];
+      const crossedWBLosers = [...wbLosers].reverse();
+
+      for (let i = 0; i < prevLBMatches.length; i++) {
+        const m: MatchSeed = {
+          roundNumber: lbRoundNum,
+          matchNumber: nextMatchNum++,
+          entry1Id: null,
+          entry2Id: null,
+          sourceMatch1Num: prevLBMatches[i].matchNumber,
+          bracket: 'losers',
+        };
+        lbEvenMatches.push(m);
+        allMatches.push(m);
+      }
+      lbByRound.set(lbRoundNum, lbEvenMatches);
+
+      for (let i = 0; i < crossedWBLosers.length && i < lbEvenMatches.length; i++) {
+        crossedWBLosers[i].loserNextMatchNum = lbEvenMatches[i].matchNumber;
+        crossedWBLosers[i].loserSlot = 2;
+      }
+
+      if (wbRound === totalWBRounds) {
+        prevLBMatches = lbEvenMatches;
+        break;
+      }
+
+      lbRoundNum++;
+      const lbOddMatches: MatchSeed[] = [];
+      for (let i = 0; i < lbEvenMatches.length; i += 2) {
+        if (i + 1 < lbEvenMatches.length) {
+          const m: MatchSeed = {
+            roundNumber: lbRoundNum,
+            matchNumber: nextMatchNum++,
+            entry1Id: null,
+            entry2Id: null,
+            sourceMatch1Num: lbEvenMatches[i].matchNumber,
+            sourceMatch2Num: lbEvenMatches[i + 1].matchNumber,
+            bracket: 'losers',
+          };
+          lbOddMatches.push(m);
+          allMatches.push(m);
+        } else {
+          const m: MatchSeed = {
+            roundNumber: lbRoundNum,
+            matchNumber: nextMatchNum++,
+            entry1Id: null,
+            entry2Id: null,
+            sourceMatch1Num: lbEvenMatches[i].matchNumber,
+            bracket: 'losers',
+          };
+          lbOddMatches.push(m);
+          allMatches.push(m);
+        }
+      }
+      lbByRound.set(lbRoundNum, lbOddMatches);
+      prevLBMatches = lbOddMatches;
+    }
+
+    const wbFinal = wbByRound.get(totalWBRounds)![0];
+    const lbFinal = prevLBMatches[prevLBMatches.length - 1];
+
+    const gfMatch: MatchSeed = {
+      roundNumber: 1,
+      matchNumber: nextMatchNum++,
+      entry1Id: null,
+      entry2Id: null,
+      sourceMatch1Num: wbFinal.matchNumber,
+      sourceMatch2Num: lbFinal.matchNumber,
+      bracket: 'grand_final',
+    };
+    allMatches.push(gfMatch);
+
+    return allMatches;
+  }
+
   async createDraw(divisionId: string, input: CreateDrawInput): Promise<DrawResult<Draw>> {
     const db = getDatabase();
 
@@ -296,6 +446,8 @@ export class MockDrawService implements DrawService {
     let matchSeeds: MatchSeed[];
     if (input.drawType === 'round_robin') {
       matchSeeds = this.generateRoundRobinMatches(entries);
+    } else if (input.drawType === 'double_elimination') {
+      matchSeeds = this.generateDoubleEliminationMatches(entries);
     } else {
       matchSeeds = this.generateSingleEliminationMatches(entries);
     }
@@ -305,8 +457,8 @@ export class MockDrawService implements DrawService {
 
     // First pass: create all matches
     const insertMatch = db.prepare(`
-      INSERT INTO matches (id, draw_id, round_number, match_number, entry1_id, entry2_id, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO matches (id, draw_id, round_number, match_number, bracket, entry1_id, entry2_id, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const seed of matchSeeds) {
@@ -316,12 +468,14 @@ export class MockDrawService implements DrawService {
       // For bye matches, auto-complete with walkover
       const status = seed.isBye ? 'walkover' : 'pending';
       const winnerId = seed.isBye ? (seed.entry1Id || seed.entry2Id) : null;
+      const bracket = seed.bracket || 'winners';
 
       insertMatch.run(
         matchId,
         drawId,
         seed.roundNumber,
         seed.matchNumber,
+        bracket,
         seed.entry1Id,
         seed.entry2Id,
         status,
@@ -335,17 +489,32 @@ export class MockDrawService implements DrawService {
       }
     }
 
-    // Second pass: link source matches
-    const updateSourceMatches = db.prepare(`
-      UPDATE matches SET source_match1_id = ?, source_match2_id = ? WHERE id = ?
-    `);
-
+    // Second pass: link source matches and loser routing
     for (const seed of matchSeeds) {
+      const matchId = matchIdMap.get(seed.matchNumber)!;
+      const updates: string[] = [];
+      const values: (string | number | null)[] = [];
+
       if (seed.sourceMatch1Num || seed.sourceMatch2Num) {
-        const matchId = matchIdMap.get(seed.matchNumber)!;
         const source1Id = seed.sourceMatch1Num ? matchIdMap.get(seed.sourceMatch1Num) || null : null;
         const source2Id = seed.sourceMatch2Num ? matchIdMap.get(seed.sourceMatch2Num) || null : null;
-        updateSourceMatches.run(source1Id, source2Id, matchId);
+        updates.push('source_match1_id = ?');
+        values.push(source1Id);
+        updates.push('source_match2_id = ?');
+        values.push(source2Id);
+      }
+
+      if (seed.loserNextMatchNum) {
+        const loserNextId = matchIdMap.get(seed.loserNextMatchNum) || null;
+        updates.push('loser_next_match_id = ?');
+        values.push(loserNextId);
+        updates.push('loser_slot = ?');
+        values.push(seed.loserSlot || null);
+      }
+
+      if (updates.length > 0) {
+        values.push(matchId);
+        db.prepare(`UPDATE matches SET ${updates.join(', ')} WHERE id = ?`).run(...values);
       }
     }
 
@@ -359,6 +528,11 @@ export class MockDrawService implements DrawService {
             await this.advanceWinnerInternal(matchId, winnerId, matchIdMap, matchSeeds);
           }
         }
+      }
+
+      // For double elimination, handle LB byes caused by WB byes
+      if (input.drawType === 'double_elimination') {
+        await this.cascadeLBByes(drawId);
       }
     }
 
@@ -405,6 +579,111 @@ export class MockDrawService implements DrawService {
     } else if (nextMatchRow.source_match2_id === matchId) {
       db.prepare('UPDATE matches SET entry2_id = ?, updated_at = ? WHERE id = ?')
         .run(winnerId, new Date().toISOString(), nextMatchRow.id);
+    }
+  }
+
+  private async cascadeLBByes(drawId: string): Promise<void> {
+    const db = getDatabase();
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+
+      const lbMatches = db.prepare(`
+        SELECT * FROM matches
+        WHERE draw_id = ? AND bracket IN ('losers', 'grand_final') AND status = 'pending'
+        ORDER BY round_number, match_number
+      `).all(drawId) as DbMatch[];
+
+      for (const lbMatch of lbMatches) {
+        const wbByeFeeders = db.prepare(`
+          SELECT * FROM matches
+          WHERE draw_id = ? AND loser_next_match_id = ? AND status = 'walkover'
+        `).all(drawId, lbMatch.id) as DbMatch[];
+
+        if (wbByeFeeders.length > 0) {
+          const hasEntry1 = lbMatch.entry1_id !== null;
+          const hasEntry2 = lbMatch.entry2_id !== null;
+
+          if (hasEntry1 && !hasEntry2) {
+            db.prepare(`UPDATE matches SET winner_entry_id = ?, status = 'walkover', updated_at = ? WHERE id = ?`)
+              .run(lbMatch.entry1_id, new Date().toISOString(), lbMatch.id);
+            await this.advanceWinnerInternalById(lbMatch.id, lbMatch.entry1_id!);
+            changed = true;
+          } else if (!hasEntry1 && hasEntry2) {
+            db.prepare(`UPDATE matches SET winner_entry_id = ?, status = 'walkover', updated_at = ? WHERE id = ?`)
+              .run(lbMatch.entry2_id, new Date().toISOString(), lbMatch.id);
+            await this.advanceWinnerInternalById(lbMatch.id, lbMatch.entry2_id!);
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+
+  private async advanceWinnerInternalById(matchId: string, winnerId: string): Promise<void> {
+    const db = getDatabase();
+
+    const match = db.prepare('SELECT * FROM matches WHERE id = ?').get(matchId) as DbMatch | undefined;
+    if (!match) return;
+
+    const nextMatchRow = db.prepare(`
+      SELECT * FROM matches
+      WHERE draw_id = ? AND (source_match1_id = ? OR source_match2_id = ?)
+    `).get(match.draw_id, matchId, matchId) as DbMatch | undefined;
+
+    if (!nextMatchRow) return;
+
+    if (nextMatchRow.source_match1_id === matchId) {
+      db.prepare('UPDATE matches SET entry1_id = ?, updated_at = ? WHERE id = ?')
+        .run(winnerId, new Date().toISOString(), nextMatchRow.id);
+    } else if (nextMatchRow.source_match2_id === matchId) {
+      db.prepare('UPDATE matches SET entry2_id = ?, updated_at = ? WHERE id = ?')
+        .run(winnerId, new Date().toISOString(), nextMatchRow.id);
+    }
+  }
+
+  private routeLoser(matchId: string, loserId: string): void {
+    const db = getDatabase();
+
+    const match = db.prepare('SELECT * FROM matches WHERE id = ?').get(matchId) as DbMatch | undefined;
+    if (!match || !match.loser_next_match_id) return;
+
+    const slot = match.loser_slot;
+    const now = new Date().toISOString();
+    if (slot === 1) {
+      db.prepare('UPDATE matches SET entry1_id = ?, updated_at = ? WHERE id = ?')
+        .run(loserId, now, match.loser_next_match_id);
+    } else if (slot === 2) {
+      db.prepare('UPDATE matches SET entry2_id = ?, updated_at = ? WHERE id = ?')
+        .run(loserId, now, match.loser_next_match_id);
+    }
+
+    // Check if the destination LB match is now a walkover
+    const dest = db.prepare('SELECT * FROM matches WHERE id = ?').get(match.loser_next_match_id) as DbMatch | undefined;
+    if (dest && dest.status === 'pending') {
+      const otherSlot = slot === 1 ? 2 : 1;
+      const feeder = db.prepare(`
+        SELECT * FROM matches WHERE loser_next_match_id = ? AND loser_slot = ? AND status = 'walkover'
+      `).get(dest.id, otherSlot) as DbMatch | undefined;
+
+      if (feeder) {
+        db.prepare(`UPDATE matches SET winner_entry_id = ?, status = 'walkover', updated_at = ? WHERE id = ?`)
+          .run(loserId, now, dest.id);
+        // Advance this walkover winner
+        const nextMatch = db.prepare(`
+          SELECT * FROM matches WHERE draw_id = ? AND (source_match1_id = ? OR source_match2_id = ?)
+        `).get(dest.draw_id, dest.id, dest.id) as DbMatch | undefined;
+        if (nextMatch) {
+          if (nextMatch.source_match1_id === dest.id) {
+            db.prepare('UPDATE matches SET entry1_id = ?, updated_at = ? WHERE id = ?')
+              .run(loserId, now, nextMatch.id);
+          } else if (nextMatch.source_match2_id === dest.id) {
+            db.prepare('UPDATE matches SET entry2_id = ?, updated_at = ? WHERE id = ?')
+              .run(loserId, now, nextMatch.id);
+          }
+        }
+      }
     }
   }
 
@@ -582,6 +861,14 @@ export class MockDrawService implements DrawService {
             .run(input.winnerId, now, nextMatch.id);
         }
       }
+
+      // Route loser to losers bracket (for double elimination)
+      if (draw.drawType === 'double_elimination') {
+        const loserId = input.winnerId === match.entry1Id ? match.entry2Id : match.entry1Id;
+        if (loserId) {
+          this.routeLoser(matchId, loserId);
+        }
+      }
     }
 
     // Update standings (for round robin)
@@ -613,7 +900,7 @@ export class MockDrawService implements DrawService {
       return { success: false, error: 'draw_is_completed', message: 'Cannot modify completed draw' };
     }
 
-    // Check if next match has been played
+    // Check if next match (winner path) has been played
     const nextMatch = db.prepare(`
       SELECT * FROM matches
       WHERE draw_id = ? AND (source_match1_id = ? OR source_match2_id = ?)
@@ -621,6 +908,24 @@ export class MockDrawService implements DrawService {
 
     if (nextMatch && ['completed', 'walkover', 'retired'].includes(nextMatch.status)) {
       return { success: false, error: 'cannot_clear_result', message: 'Cannot clear result - winner has already played next match' };
+    }
+
+    // For double elimination, check and clear loser routing
+    if (draw.drawType === 'double_elimination' && match.loserNextMatchId) {
+      const loserDest = db.prepare('SELECT * FROM matches WHERE id = ?').get(match.loserNextMatchId) as DbMatch | undefined;
+      if (loserDest && ['completed', 'walkover', 'retired'].includes(loserDest.status)) {
+        return { success: false, error: 'cannot_clear_result', message: 'Cannot clear result - loser has already played in losers bracket' };
+      }
+
+      // Clear loser from destination match
+      const now2 = new Date().toISOString();
+      if (match.loserSlot === 1) {
+        db.prepare('UPDATE matches SET entry1_id = NULL, updated_at = ? WHERE id = ?')
+          .run(now2, match.loserNextMatchId);
+      } else if (match.loserSlot === 2) {
+        db.prepare('UPDATE matches SET entry2_id = NULL, updated_at = ? WHERE id = ?')
+          .run(now2, match.loserNextMatchId);
+      }
     }
 
     const now = new Date().toISOString();

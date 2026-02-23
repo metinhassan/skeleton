@@ -18,11 +18,14 @@ export interface Draw {
   updatedAt: string;
 }
 
+export type BracketType = 'winners' | 'losers' | 'grand_final';
+
 export interface Match {
   id: string;
   drawId: string;
   roundNumber: number;
   matchNumber: number;
+  bracket?: BracketType;
   entry1Id: string | null;
   entry2Id: string | null;
   winnerId: string | null;

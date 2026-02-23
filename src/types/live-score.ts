@@ -156,6 +156,9 @@ export interface BracketMatch {
 export interface BracketData {
   format: string;
   rounds: BracketMatch[][];
+  winnersBracket?: BracketMatch[][];
+  losersBracket?: BracketMatch[][];
+  grandFinal?: BracketMatch[];
 }
 
 // Standings types

@@ -20,6 +20,7 @@ import type {
   SetScore,
   MatchSeed,
   DrawConfig,
+  BracketType,
 } from './draw-service.js';
 
 interface DbDraw {
@@ -37,6 +38,7 @@ interface DbMatch {
   draw_id: string;
   round_number: number;
   match_number: number;
+  bracket: string;
   entry1_id: string | null;
   entry2_id: string | null;
   winner_entry_id: string | null;
@@ -46,6 +48,8 @@ interface DbMatch {
   court: string | null;
   source_match1_id: string | null;
   source_match2_id: string | null;
+  loser_next_match_id: string | null;
+  loser_slot: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -91,6 +95,7 @@ export class PostgresDrawService implements DrawService {
       drawId: row.draw_id,
       roundNumber: row.round_number,
       matchNumber: row.match_number,
+      bracket: (row.bracket || 'winners') as BracketType,
       entry1Id: row.entry1_id,
       entry2Id: row.entry2_id,
       winnerEntryId: row.winner_entry_id,
@@ -100,6 +105,8 @@ export class PostgresDrawService implements DrawService {
       court: row.court,
       sourceMatch1Id: row.source_match1_id,
       sourceMatch2Id: row.source_match2_id,
+      loserNextMatchId: row.loser_next_match_id,
+      loserSlot: row.loser_slot as (1 | 2 | null),
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };
@@ -243,6 +250,169 @@ export class PostgresDrawService implements DrawService {
     return matches;
   }
 
+  private generateDoubleEliminationMatches(entries: DbEntry[]): MatchSeed[] {
+    const n = entries.length;
+    if (n < 2) return [];
+
+    const bracketSize = Math.pow(2, Math.ceil(Math.log2(n)));
+    const totalWBRounds = Math.log2(bracketSize);
+
+    // Generate winners bracket (reuse single elimination logic but tag as 'winners')
+    const wbMatches = this.generateSingleEliminationMatches(entries);
+    for (const m of wbMatches) {
+      m.bracket = 'winners';
+    }
+
+    const allMatches: MatchSeed[] = [...wbMatches];
+    let nextMatchNum = wbMatches.length + 1;
+
+    // Build index of WB matches by round for linking losers
+    const wbByRound: Map<number, MatchSeed[]> = new Map();
+    for (const m of wbMatches) {
+      if (!wbByRound.has(m.roundNumber)) wbByRound.set(m.roundNumber, []);
+      wbByRound.get(m.roundNumber)!.push(m);
+    }
+
+    // Generate losers bracket
+    // LB comes in pairs of rounds:
+    //   LB odd round (1,3,5...): losers from a WB round drop in (or LB winners pair up)
+    //   LB even round (2,4,6...): LB survivors face new WB losers (crossed)
+    // For bracketSize=4: LB has 2 rounds, for bracketSize=8: LB has 4 rounds, etc.
+    // Total LB rounds = 2*(totalWBRounds - 1)
+    const totalLBRounds = 2 * (totalWBRounds - 1);
+
+    // Track LB matches by LB round for chaining
+    const lbByRound: Map<number, MatchSeed[]> = new Map();
+    let lbRoundNum = 1;
+
+    // LB Round 1: WB R1 losers paired together
+    const wbR1 = wbByRound.get(1) || [];
+    const lbR1Matches: MatchSeed[] = [];
+    for (let i = 0; i < wbR1.length; i += 2) {
+      if (i + 1 < wbR1.length) {
+        const m: MatchSeed = {
+          roundNumber: lbRoundNum,
+          matchNumber: nextMatchNum++,
+          entry1Id: null,
+          entry2Id: null,
+          bracket: 'losers',
+        };
+        lbR1Matches.push(m);
+        allMatches.push(m);
+      }
+    }
+    // If only one WB R1 match, single loser drops into a single LB R1 match
+    if (wbR1.length === 1) {
+      const m: MatchSeed = {
+        roundNumber: lbRoundNum,
+        matchNumber: nextMatchNum++,
+        entry1Id: null,
+        entry2Id: null,
+        bracket: 'losers',
+      };
+      lbR1Matches.push(m);
+      allMatches.push(m);
+    }
+    lbByRound.set(lbRoundNum, lbR1Matches);
+
+    // Link WB R1 losers to LB R1
+    for (let i = 0; i < wbR1.length; i++) {
+      const lbMatchIdx = Math.floor(i / 2);
+      if (lbMatchIdx < lbR1Matches.length) {
+        wbR1[i].loserNextMatchNum = lbR1Matches[lbMatchIdx].matchNumber;
+        wbR1[i].loserSlot = (i % 2 === 0 ? 1 : 2) as 1 | 2;
+      }
+    }
+
+    let prevLBMatches = lbR1Matches;
+
+    // Subsequent LB round pairs
+    for (let wbRound = 2; wbRound <= totalWBRounds; wbRound++) {
+      const wbLosers = wbByRound.get(wbRound) || [];
+
+      // LB even round: LB survivors vs WB losers (CROSSED to avoid rematches)
+      lbRoundNum++;
+      const lbEvenMatches: MatchSeed[] = [];
+      const crossedWBLosers = [...wbLosers].reverse(); // Cross: reverse order
+
+      for (let i = 0; i < prevLBMatches.length; i++) {
+        const m: MatchSeed = {
+          roundNumber: lbRoundNum,
+          matchNumber: nextMatchNum++,
+          entry1Id: null,
+          entry2Id: null,
+          sourceMatch1Num: prevLBMatches[i].matchNumber, // LB survivor
+          bracket: 'losers',
+        };
+        lbEvenMatches.push(m);
+        allMatches.push(m);
+      }
+      lbByRound.set(lbRoundNum, lbEvenMatches);
+
+      // Link WB losers from this round into LB even round (crossed)
+      for (let i = 0; i < crossedWBLosers.length && i < lbEvenMatches.length; i++) {
+        crossedWBLosers[i].loserNextMatchNum = lbEvenMatches[i].matchNumber;
+        crossedWBLosers[i].loserSlot = 2; // WB loser goes to slot 2
+      }
+
+      // If this is the last WB round, no more odd rounds needed after this even
+      if (wbRound === totalWBRounds) {
+        prevLBMatches = lbEvenMatches;
+        break;
+      }
+
+      // LB odd round: LB even round winners pair up
+      lbRoundNum++;
+      const lbOddMatches: MatchSeed[] = [];
+      for (let i = 0; i < lbEvenMatches.length; i += 2) {
+        if (i + 1 < lbEvenMatches.length) {
+          const m: MatchSeed = {
+            roundNumber: lbRoundNum,
+            matchNumber: nextMatchNum++,
+            entry1Id: null,
+            entry2Id: null,
+            sourceMatch1Num: lbEvenMatches[i].matchNumber,
+            sourceMatch2Num: lbEvenMatches[i + 1].matchNumber,
+            bracket: 'losers',
+          };
+          lbOddMatches.push(m);
+          allMatches.push(m);
+        } else {
+          // Odd number of matches - single match passes through
+          const m: MatchSeed = {
+            roundNumber: lbRoundNum,
+            matchNumber: nextMatchNum++,
+            entry1Id: null,
+            entry2Id: null,
+            sourceMatch1Num: lbEvenMatches[i].matchNumber,
+            bracket: 'losers',
+          };
+          lbOddMatches.push(m);
+          allMatches.push(m);
+        }
+      }
+      lbByRound.set(lbRoundNum, lbOddMatches);
+      prevLBMatches = lbOddMatches;
+    }
+
+    // Grand Final: WB champion vs LB champion
+    const wbFinal = wbByRound.get(totalWBRounds)![0];
+    const lbFinal = prevLBMatches[prevLBMatches.length - 1];
+
+    const gfMatch: MatchSeed = {
+      roundNumber: 1,
+      matchNumber: nextMatchNum++,
+      entry1Id: null,
+      entry2Id: null,
+      sourceMatch1Num: wbFinal.matchNumber, // WB champion
+      sourceMatch2Num: lbFinal.matchNumber, // LB champion
+      bracket: 'grand_final',
+    };
+    allMatches.push(gfMatch);
+
+    return allMatches;
+  }
+
   async createDraw(divisionId: string, input: CreateDrawInput): Promise<DrawResult<Draw>> {
     const pool = getPool();
 
@@ -283,6 +453,8 @@ export class PostgresDrawService implements DrawService {
     let matchSeeds: MatchSeed[];
     if (input.drawType === 'round_robin') {
       matchSeeds = this.generateRoundRobinMatches(entries);
+    } else if (input.drawType === 'double_elimination') {
+      matchSeeds = this.generateDoubleEliminationMatches(entries);
     } else {
       matchSeeds = this.generateSingleEliminationMatches(entries);
     }
@@ -296,22 +468,44 @@ export class PostgresDrawService implements DrawService {
 
       const status = seed.isBye ? 'walkover' : 'pending';
       const winnerId = seed.isBye ? (seed.entry1Id || seed.entry2Id) : null;
+      const bracket = seed.bracket || 'winners';
 
       await pool.query(`
-        INSERT INTO matches (id, draw_id, round_number, match_number, entry1_id, entry2_id, winner_entry_id, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [matchId, drawId, seed.roundNumber, seed.matchNumber, seed.entry1Id, seed.entry2Id, winnerId, status]);
+        INSERT INTO matches (id, draw_id, round_number, match_number, bracket, entry1_id, entry2_id, winner_entry_id, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `, [matchId, drawId, seed.roundNumber, seed.matchNumber, bracket, seed.entry1Id, seed.entry2Id, winnerId, status]);
     }
 
-    // Second pass: link source matches
+    // Second pass: link source matches and loser routing
     for (const seed of matchSeeds) {
+      const matchId = matchIdMap.get(seed.matchNumber)!;
+      const updates: string[] = [];
+      const values: (string | number | null)[] = [];
+      let paramIdx = 1;
+
       if (seed.sourceMatch1Num || seed.sourceMatch2Num) {
-        const matchId = matchIdMap.get(seed.matchNumber)!;
         const source1Id = seed.sourceMatch1Num ? matchIdMap.get(seed.sourceMatch1Num) || null : null;
         const source2Id = seed.sourceMatch2Num ? matchIdMap.get(seed.sourceMatch2Num) || null : null;
-        await pool.query(`
-          UPDATE matches SET source_match1_id = $1, source_match2_id = $2 WHERE id = $3
-        `, [source1Id, source2Id, matchId]);
+        updates.push(`source_match1_id = $${paramIdx++}`);
+        values.push(source1Id);
+        updates.push(`source_match2_id = $${paramIdx++}`);
+        values.push(source2Id);
+      }
+
+      if (seed.loserNextMatchNum) {
+        const loserNextId = matchIdMap.get(seed.loserNextMatchNum) || null;
+        updates.push(`loser_next_match_id = $${paramIdx++}`);
+        values.push(loserNextId);
+        updates.push(`loser_slot = $${paramIdx++}`);
+        values.push(seed.loserSlot || null);
+      }
+
+      if (updates.length > 0) {
+        values.push(matchId);
+        await pool.query(
+          `UPDATE matches SET ${updates.join(', ')} WHERE id = $${paramIdx}`,
+          values
+        );
       }
     }
 
@@ -325,6 +519,11 @@ export class PostgresDrawService implements DrawService {
             await this.advanceWinnerInternal(matchId, winnerId);
           }
         }
+      }
+
+      // For double elimination, handle LB byes caused by WB byes
+      if (input.drawType === 'double_elimination') {
+        await this.cascadeLBByes(drawId);
       }
     }
 
@@ -362,6 +561,103 @@ export class PostgresDrawService implements DrawService {
     } else if (nextMatch.source_match2_id === matchId) {
       await pool.query('UPDATE matches SET entry2_id = $1 WHERE id = $2', [winnerId, nextMatch.id]);
     }
+  }
+
+  private async cascadeLBByes(drawId: string): Promise<void> {
+    const pool = getPool();
+
+    // Iteratively check LB matches - if an LB match has a WB bye as source
+    // (loser from a walkover match), the loser slot stays null.
+    // If one entry arrives and the other never will, it's a walkover.
+    let changed = true;
+    while (changed) {
+      changed = false;
+
+      // Get all LB/GF pending matches
+      const lbMatches = await pool.query<DbMatch>(`
+        SELECT * FROM matches
+        WHERE draw_id = $1 AND bracket IN ('losers', 'grand_final') AND status = 'pending'
+        ORDER BY round_number, match_number
+      `, [drawId]);
+
+      for (const lbMatch of lbMatches.rows) {
+        // Check if this match expects a loser from a WB bye
+        // A WB bye has status 'walkover' and has a loser_next_match_id pointing here
+        const wbByeFeeder = await pool.query<DbMatch>(`
+          SELECT * FROM matches
+          WHERE draw_id = $1 AND loser_next_match_id = $2 AND status = 'walkover'
+        `, [drawId, lbMatch.id]);
+
+        if (wbByeFeeder.rows.length > 0) {
+          // This match has a WB bye feeding into it - the loser slot will never be filled
+          // Check if the other slot has an entry (from source_match advancement)
+          const hasEntry1 = lbMatch.entry1_id !== null;
+          const hasEntry2 = lbMatch.entry2_id !== null;
+
+          if (hasEntry1 && !hasEntry2) {
+            // Only entry1 present, walkover
+            await pool.query(`
+              UPDATE matches SET winner_entry_id = $1, status = 'walkover' WHERE id = $2
+            `, [lbMatch.entry1_id, lbMatch.id]);
+            await this.advanceWinnerInternal(lbMatch.id, lbMatch.entry1_id!);
+            changed = true;
+          } else if (!hasEntry1 && hasEntry2) {
+            // Only entry2 present, walkover
+            await pool.query(`
+              UPDATE matches SET winner_entry_id = $1, status = 'walkover' WHERE id = $2
+            `, [lbMatch.entry2_id, lbMatch.id]);
+            await this.advanceWinnerInternal(lbMatch.id, lbMatch.entry2_id!);
+            changed = true;
+          }
+          // If neither entry is present yet, wait for advancement
+        }
+      }
+    }
+  }
+
+  private async routeLoser(matchId: string, loserId: string): Promise<void> {
+    const pool = getPool();
+
+    const matchResult = await pool.query<DbMatch>('SELECT * FROM matches WHERE id = $1', [matchId]);
+    if (matchResult.rows.length === 0) return;
+    const match = matchResult.rows[0];
+
+    if (!match.loser_next_match_id) return;
+
+    const slot = match.loser_slot;
+    if (slot === 1) {
+      await pool.query('UPDATE matches SET entry1_id = $1 WHERE id = $2', [loserId, match.loser_next_match_id]);
+    } else if (slot === 2) {
+      await pool.query('UPDATE matches SET entry2_id = $1 WHERE id = $2', [loserId, match.loser_next_match_id]);
+    }
+
+    // Check if the destination LB match is now a walkover (only one entry will ever arrive)
+    const destMatch = await pool.query<DbMatch>('SELECT * FROM matches WHERE id = $1', [match.loser_next_match_id]);
+    if (destMatch.rows.length > 0) {
+      const dest = destMatch.rows[0];
+      if (dest.status === 'pending') {
+        // Check if the other slot's source is a bye that will never produce a loser
+        const otherSlotWillNeverFill = await this.willSlotNeverFill(dest, slot === 1 ? 2 : 1);
+        if (otherSlotWillNeverFill) {
+          await pool.query(`
+            UPDATE matches SET winner_entry_id = $1, status = 'walkover' WHERE id = $2
+          `, [loserId, dest.id]);
+          await this.advanceWinnerInternal(dest.id, loserId);
+        }
+      }
+    }
+  }
+
+  private async willSlotNeverFill(lbMatch: DbMatch, slot: number): Promise<boolean> {
+    const pool = getPool();
+
+    // Check if there's a WB bye feeding into the slot that will never produce a loser
+    const feederResult = await pool.query<DbMatch>(`
+      SELECT * FROM matches
+      WHERE loser_next_match_id = $1 AND loser_slot = $2 AND status = 'walkover'
+    `, [lbMatch.id, slot]);
+
+    return feederResult.rows.length > 0;
   }
 
   async getDraw(drawId: string): Promise<Draw | null> {
@@ -563,6 +859,14 @@ export class PostgresDrawService implements DrawService {
           await pool.query('UPDATE matches SET entry2_id = $1 WHERE id = $2', [input.winnerId, nextMatch.id]);
         }
       }
+
+      // Route loser to losers bracket (for double elimination)
+      if (draw.drawType === 'double_elimination') {
+        const loserId = input.winnerId === match.entry1Id ? match.entry2Id : match.entry1Id;
+        if (loserId) {
+          await this.routeLoser(matchId, loserId);
+        }
+      }
     }
 
     // Update standings (for round robin)
@@ -594,7 +898,7 @@ export class PostgresDrawService implements DrawService {
       return { success: false, error: 'draw_is_completed', message: 'Cannot modify completed draw' };
     }
 
-    // Check if next match has been played
+    // Check if next match (winner path) has been played
     const nextMatchResult = await pool.query<DbMatch>(`
       SELECT * FROM matches
       WHERE draw_id = $1 AND (source_match1_id = $2 OR source_match2_id = $2)
@@ -611,6 +915,26 @@ export class PostgresDrawService implements DrawService {
         await pool.query('UPDATE matches SET entry1_id = NULL WHERE id = $1', [nextMatch.id]);
       } else if (nextMatch.source_match2_id === matchId) {
         await pool.query('UPDATE matches SET entry2_id = NULL WHERE id = $1', [nextMatch.id]);
+      }
+    }
+
+    // For double elimination, check and clear loser routing
+    if (draw.drawType === 'double_elimination' && match.loserNextMatchId) {
+      const loserDestResult = await pool.query<DbMatch>(
+        'SELECT * FROM matches WHERE id = $1', [match.loserNextMatchId]
+      );
+      if (loserDestResult.rows.length > 0) {
+        const loserDest = loserDestResult.rows[0];
+        if (['completed', 'walkover', 'retired'].includes(loserDest.status)) {
+          return { success: false, error: 'cannot_clear_result', message: 'Cannot clear result - loser has already played in losers bracket' };
+        }
+
+        // Clear loser from destination match
+        if (match.loserSlot === 1) {
+          await pool.query('UPDATE matches SET entry1_id = NULL WHERE id = $1', [match.loserNextMatchId]);
+        } else if (match.loserSlot === 2) {
+          await pool.query('UPDATE matches SET entry2_id = NULL WHERE id = $1', [match.loserNextMatchId]);
+        }
       }
     }
 

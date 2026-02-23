@@ -130,9 +130,7 @@ export class DrawConfigModal {
     }
 
     if (this.selectedType === 'double_elimination') {
-      const winnersMatches = bracketSize - 1;
-      const losersMatches = bracketSize - 1;
-      const totalMatches = winnersMatches + losersMatches + 1; // +1 for grand final
+      const totalMatches = 2 * bracketSize - 2;
       return `
         <div class="draw-preview__stats">
           <div class="draw-preview__stat">

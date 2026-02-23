@@ -129,6 +129,7 @@ function transformMatchForFrontend(match: any): any {
     drawId: match.drawId,
     roundNumber: match.roundNumber,
     matchNumber: match.matchNumber,
+    bracket: match.bracket || 'winners',
     entry1Id: match.entry1Id,
     entry2Id: match.entry2Id,
     winnerId: match.winnerEntryId || null,
@@ -3681,21 +3682,18 @@ app.get('/api/public/competitions/:slug/bracket', async (req: Request, res: Resp
 
     // Collect all matches across divisions/draws, grouped by round
     const allMatches: any[] = [];
+    let isDoubleElimination = false;
     for (const division of divisions) {
       const draws = await drawService.getDivisionDraws(division.id);
       for (const draw of draws) {
+        if (draw.drawType === 'double_elimination') isDoubleElimination = true;
         const matches = await drawService.getDrawMatchesWithNames(draw.id);
         allMatches.push(...matches.map(m => ({ ...m, divisionName: division.name })));
       }
     }
 
-    // Group matches into rounds and transform to BracketMatch format
-    const roundMap = new Map<number, any[]>();
-    for (const match of allMatches) {
-      const round = match.roundNumber || 1;
-      if (!roundMap.has(round)) roundMap.set(round, []);
-
-      // Calculate scores from SetScore array if available
+    // Helper to transform a match to bracket format
+    const transformBracketMatch = (match: any) => {
       let e1Score: string | null = null;
       let e2Score: string | null = null;
       if (match.score && Array.isArray(match.score)) {
@@ -3710,10 +3708,11 @@ app.get('/api/public/competitions/:slug/bracket', async (req: Request, res: Resp
         e2Score = match.entry2Score != null ? String(match.entry2Score) : null;
       }
 
-      roundMap.get(round)!.push({
+      return {
         id: match.id,
         round: match.roundNumber || 1,
         position: match.matchNumber || 1,
+        bracket: match.bracket || 'winners',
         entry1Name: match.entry1Name || null,
         entry2Name: match.entry2Name || null,
         entry1Score: e1Score,
@@ -3721,14 +3720,38 @@ app.get('/api/public/competitions/:slug/bracket', async (req: Request, res: Resp
         winnerId: match.winnerEntryId || null,
         status: match.status === 'pending' || match.status === 'scheduled' || match.status === 'not_started'
           ? 'upcoming' : match.status === 'in_progress' ? 'in_progress' : 'completed',
-      });
+      };
+    };
+
+    // Group matches into rounds
+    const groupByRound = (matches: any[]) => {
+      const roundMap = new Map<number, any[]>();
+      for (const match of matches) {
+        const round = match.roundNumber || 1;
+        if (!roundMap.has(round)) roundMap.set(round, []);
+        roundMap.get(round)!.push(transformBracketMatch(match));
+      }
+      const sortedRounds = [...roundMap.keys()].sort((a, b) => a - b);
+      return sortedRounds.map(r => roundMap.get(r)!);
+    };
+
+    let bracket: any;
+    if (isDoubleElimination) {
+      const wbMatches = allMatches.filter(m => m.bracket === 'winners');
+      const lbMatches = allMatches.filter(m => m.bracket === 'losers');
+      const gfMatches = allMatches.filter(m => m.bracket === 'grand_final');
+
+      bracket = {
+        format: 'double_elimination',
+        rounds: groupByRound(allMatches),
+        winnersBracket: groupByRound(wbMatches),
+        losersBracket: groupByRound(lbMatches),
+        grandFinal: gfMatches.map(transformBracketMatch),
+      };
+    } else {
+      const rounds = groupByRound(allMatches);
+      bracket = rounds.length > 0 ? { format: competition.format || 'knockout', rounds } : undefined;
     }
-
-    // Sort rounds and build rounds array
-    const sortedRounds = [...roundMap.keys()].sort((a, b) => a - b);
-    const rounds = sortedRounds.map(r => roundMap.get(r)!);
-
-    const bracket = rounds.length > 0 ? { format: competition.format || 'knockout', rounds } : undefined;
 
     res.json({
       competition: { id: competition.id, name: competition.name, format: competition.format },

@@ -110,6 +110,15 @@ export class BracketView {
 
     const { bracket, standings } = this.competitionData;
 
+    let bracketHtml = '';
+    if (bracket) {
+      if (bracket.format === 'double_elimination' && bracket.winnersBracket) {
+        bracketHtml = this.renderDoubleEliminationBracket(bracket);
+      } else if (bracket.rounds && bracket.rounds.length > 0) {
+        bracketHtml = this.renderBracket(bracket);
+      }
+    }
+
     this.container.innerHTML = `
       <div class="bracket-container">
         <header class="bracket-header">
@@ -117,7 +126,7 @@ export class BracketView {
           <p>${this.formatCompetitionFormat(this.competitionData.format)}</p>
         </header>
         ${standings && standings.length > 0 ? this.renderStandings(standings) : ''}
-        ${bracket && bracket.rounds && bracket.rounds.length > 0 ? this.renderBracket(bracket) : ''}
+        ${bracketHtml}
       </div>
     `;
   }
@@ -200,6 +209,48 @@ export class BracketView {
             </div>
           </div>
         `).join('')}
+      </div>
+    `;
+  }
+
+  private renderDoubleEliminationBracket(bracket: BracketData): string {
+    const renderSection = (rounds: BracketMatch[][], title: string) => {
+      if (!rounds || rounds.length === 0) return '';
+      const roundNames = rounds.map((_, i) => `Round ${i + 1}`);
+
+      return `
+        <div class="de-section">
+          <div class="de-section__title">${title}</div>
+          <div class="bracket-wrapper">
+            ${rounds.map((round, index) => `
+              <div class="bracket-round">
+                <div class="round-header">${roundNames[index]}</div>
+                <div class="bracket-matches">
+                  ${round.map((match) => this.renderBracketMatch(match)).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    };
+
+    return `
+      <div class="double-elimination">
+        ${renderSection(bracket.winnersBracket || [], 'Winners Bracket')}
+        ${renderSection(bracket.losersBracket || [], 'Losers Bracket')}
+        ${bracket.grandFinal && bracket.grandFinal.length > 0 ? `
+          <div class="de-section">
+            <div class="de-section__title">Grand Final</div>
+            <div class="bracket-wrapper">
+              <div class="bracket-round">
+                <div class="bracket-matches">
+                  ${bracket.grandFinal.map((match) => this.renderBracketMatch(match)).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
   }
