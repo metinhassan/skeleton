@@ -1130,6 +1130,28 @@ body {
   font-size: 1.5rem;
 }
 
+/* Double Elimination layout */
+.double-elimination {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.de-section {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-lg, 0.5rem);
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.de-section__title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--color-border, #e5e7eb);
+}
+
 .bracket-wrapper {
   display: flex;
   gap: 1rem;

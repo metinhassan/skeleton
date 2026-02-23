@@ -159,7 +159,17 @@ export class DrawManager {
     if (!this.currentDraw) return '';
 
     const isRoundRobin = this.currentDraw.drawType === 'round_robin';
+    const isDoubleElimination = this.currentDraw.drawType === 'double_elimination';
     const showRegenerateButton = this.state === 'active' && !this.hasStartedMatches();
+
+    let bracketHtml: string;
+    if (isRoundRobin) {
+      bracketHtml = this.renderStandings();
+    } else if (isDoubleElimination) {
+      bracketHtml = this.renderDoubleEliminationBracket();
+    } else {
+      bracketHtml = this.renderBracket();
+    }
 
     return `
       <div class="draw-view">
@@ -174,7 +184,7 @@ export class DrawManager {
             <button class="btn btn-outline btn-sm" id="regenerate-draw-btn">Regenerate</button>
           ` : ''}
         </div>
-        ${isRoundRobin ? this.renderStandings() : this.renderBracket()}
+        ${bracketHtml}
       </div>
     `;
   }
@@ -211,6 +221,60 @@ export class DrawManager {
             `;
           })
           .join('')}
+      </div>
+    `;
+  }
+
+  private renderDoubleEliminationBracket(): string {
+    if (!this.currentDraw) return '';
+
+    const matches = this.currentDraw.matches;
+    const wbMatches = matches.filter(m => m.bracket === 'winners');
+    const lbMatches = matches.filter(m => m.bracket === 'losers');
+    const gfMatches = matches.filter(m => m.bracket === 'grand_final');
+
+    const renderSection = (sectionMatches: Match[], title: string) => {
+      const byRound = this.groupMatchesByRound(sectionMatches);
+      const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+
+      if (rounds.length === 0) return '';
+
+      return `
+        <div class="de-section">
+          <div class="de-section__title">${title}</div>
+          <div class="bracket-wrapper">
+            ${rounds.map(roundNum => {
+              const roundMatches = byRound[roundNum];
+              return `
+                <div class="bracket-round">
+                  <div class="round-header">Round ${roundNum}</div>
+                  <div class="bracket-matches">
+                    ${roundMatches.map(match => this.renderBracketMatch(match)).join('')}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    };
+
+    return `
+      <div class="double-elimination">
+        ${renderSection(wbMatches, 'Winners Bracket')}
+        ${renderSection(lbMatches, 'Losers Bracket')}
+        ${gfMatches.length > 0 ? `
+          <div class="de-section">
+            <div class="de-section__title">Grand Final</div>
+            <div class="bracket-wrapper">
+              <div class="bracket-round">
+                <div class="bracket-matches">
+                  ${gfMatches.map(match => this.renderBracketMatch(match)).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
   }
@@ -466,11 +530,16 @@ export class DrawManager {
     }
   }
 
-  private async loadDrawForDivision(): Promise<void> {
+  private async loadDrawForDivision(preserveScroll = false): Promise<void> {
     if (!this.selectedDivisionId) return;
 
-    this.state = 'loading';
-    this.updateContent();
+    const mainEl = document.querySelector('.app-shell__main');
+    const savedScrollTop = mainEl?.scrollTop ?? 0;
+
+    if (!preserveScroll) {
+      this.state = 'loading';
+      this.updateContent();
+    }
 
     try {
       // Fetch draws for the division
@@ -501,6 +570,11 @@ export class DrawManager {
       this.currentDraw = null;
     } finally {
       this.updateContent();
+      if (preserveScroll && mainEl) {
+        requestAnimationFrame(() => {
+          mainEl.scrollTop = savedScrollTop;
+        });
+      }
     }
   }
 
@@ -844,7 +918,7 @@ export class DrawManager {
 
         cleanup();
         toast.success('Score saved successfully');
-        this.loadDrawForDivision();
+        this.loadDrawForDivision(true);
       } catch (error) {
         console.error('Failed to save score:', error);
         toast.error(error instanceof Error ? error.message : 'Failed to save score');
@@ -870,7 +944,7 @@ export class DrawManager {
 
         cleanup();
         toast.success('Result cleared');
-        this.loadDrawForDivision();
+        this.loadDrawForDivision(true);
       } catch (error) {
         console.error('Failed to clear result:', error);
         toast.error(error instanceof Error ? error.message : 'Failed to clear result');
