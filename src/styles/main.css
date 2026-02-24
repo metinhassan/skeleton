@@ -1612,7 +1612,7 @@ body {
 }
 
 .side-nav--collapsed .collapse-icon {
-  transform: rotate(180deg);
+  transform: none;
 }
 
 /* Club Selector */
