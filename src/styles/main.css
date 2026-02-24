@@ -1217,6 +1217,18 @@ body {
   font-style: italic;
 }
 
+.bracket-entry--editable {
+  cursor: pointer;
+  position: relative;
+  border: 1px dashed transparent;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.bracket-entry--editable:hover {
+  border-color: var(--color-primary);
+  background: rgba(37, 99, 235, 0.08);
+}
+
 .bracket-name {
   flex: 1;
 }
@@ -1225,6 +1237,13 @@ body {
   font-weight: 600;
   min-width: 30px;
   text-align: right;
+}
+
+.draw-swap-select {
+  margin-left: 0.5rem;
+  max-width: 170px;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.35rem;
 }
 
 /* ============================================
@@ -4257,6 +4276,26 @@ body {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.draw-bracket-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.draw-bracket-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.draw-bracket-header__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 /* Draw Type Badge */

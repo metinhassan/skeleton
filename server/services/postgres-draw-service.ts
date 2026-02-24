@@ -809,6 +809,97 @@ export class PostgresDrawService implements DrawService {
     return { success: true, data: updated! };
   }
 
+  async swapEntries(drawId: string, bracket: BracketType, entry1Id: string, entry2Id: string): Promise<DrawResult<void>> {
+    const pool = getPool();
+    const draw = await this.getDraw(drawId);
+
+    if (!draw) {
+      return { success: false, error: 'draw_not_found', message: 'Draw not found' };
+    }
+
+    if (entry1Id === entry2Id) {
+      return { success: false, error: 'invalid_swap', message: 'Please select two different entries' };
+    }
+
+    if (draw.status === 'completed') {
+      return { success: false, error: 'draw_is_completed', message: 'Cannot edit a completed draw' };
+    }
+
+    if (draw.drawType !== 'single_elimination' && draw.drawType !== 'double_elimination') {
+      return { success: false, error: 'invalid_swap', message: 'Entry swapping is only available for elimination draws' };
+    }
+
+    const lockedResult = await pool.query<{ count: string }>(`
+      SELECT COUNT(*)::text AS count
+      FROM matches
+      WHERE draw_id = $1 AND status IN ('in_progress', 'completed', 'walkover', 'retired')
+    `, [drawId]);
+
+    if (parseInt(lockedResult.rows[0]?.count || '0', 10) > 0) {
+      return {
+        success: false,
+        error: 'invalid_swap',
+        message: 'Cannot edit draw after matches have started',
+      };
+    }
+
+    const roundOneMatches = await pool.query<DbMatch>(`
+      SELECT *
+      FROM matches
+      WHERE draw_id = $1 AND bracket = $2 AND round_number = 1
+      ORDER BY match_number
+    `, [drawId, bracket]);
+
+    if (roundOneMatches.rows.length === 0) {
+      return { success: false, error: 'invalid_swap', message: 'No editable matches found in this bracket' };
+    }
+
+    const findSlot = (entryId: string): { matchId: string; slot: 1 | 2 } | null => {
+      for (const match of roundOneMatches.rows) {
+        if (match.entry1_id === entryId) return { matchId: match.id, slot: 1 };
+        if (match.entry2_id === entryId) return { matchId: match.id, slot: 2 };
+      }
+      return null;
+    };
+
+    const slot1 = findSlot(entry1Id);
+    const slot2 = findSlot(entry2Id);
+
+    if (!slot1 || !slot2) {
+      return { success: false, error: 'entry_not_found', message: 'Both entries must be in round 1 of the selected bracket' };
+    }
+
+    try {
+      await pool.query('BEGIN');
+      if (slot1.matchId === slot2.matchId) {
+        await pool.query(
+          `UPDATE matches
+           SET entry1_id = $1, entry2_id = $2, updated_at = NOW()
+           WHERE id = $3`,
+          [entry2Id, entry1Id, slot1.matchId]
+        );
+      } else {
+        const slot1Column = slot1.slot === 1 ? 'entry1_id' : 'entry2_id';
+        const slot2Column = slot2.slot === 1 ? 'entry1_id' : 'entry2_id';
+
+        await pool.query(
+          `UPDATE matches SET ${slot1Column} = $1, updated_at = NOW() WHERE id = $2`,
+          [entry2Id, slot1.matchId]
+        );
+        await pool.query(
+          `UPDATE matches SET ${slot2Column} = $1, updated_at = NOW() WHERE id = $2`,
+          [entry1Id, slot2.matchId]
+        );
+      }
+      await pool.query('COMMIT');
+    } catch (error) {
+      await pool.query('ROLLBACK');
+      throw error;
+    }
+
+    return { success: true, data: undefined };
+  }
+
   async recordResult(matchId: string, input: RecordResultInput): Promise<DrawResult<Match>> {
     const pool = getPool();
     const match = await this.getMatch(matchId);

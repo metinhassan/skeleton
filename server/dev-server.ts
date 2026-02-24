@@ -19,7 +19,7 @@ import { getUserService, getClubService, getCompetitionService, getPlayerService
 import type { ClubRole } from './services/club-service.js';
 import type { CompetitionFormat, CompetitionType, ScoreEntryMode } from './services/competition-service.js';
 import type { EntryType, SelfRegisterInput, CreatePartnerRequestInput } from './services/player-service.js';
-import type { DrawType, RecordResultInput, UpdateMatchInput } from './services/draw-service.js';
+import type { BracketType, DrawType, RecordResultInput, UpdateMatchInput } from './services/draw-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -1922,6 +1922,36 @@ app.delete('/api/divisions/:divisionId/entries/:entryId', requireAuth as any, re
   }
 });
 
+/**
+ * POST /api/divisions/:divisionId/entries/:entryId/withdraw - Withdraw entry (organiser)
+ */
+app.post('/api/divisions/:divisionId/entries/:entryId/withdraw', requireAuth as any, requireDivisionOrganiser as any, async (req: DivisionRequest, res: Response) => {
+  try {
+    const { entryId } = req.params;
+
+    const playerService = getPlayerService();
+
+    // Verify entry belongs to division
+    const existing = await playerService.getEntry(entryId);
+    if (!existing || existing.divisionId !== req.divisionId) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+
+    const result = await playerService.withdrawEntry(entryId);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Withdraw entry error:', error);
+    res.status(500).json({ error: 'Failed to withdraw entry' });
+  }
+});
+
 // ==================== Profile Claiming API Endpoints (Epic 4) ====================
 
 /**
@@ -2645,6 +2675,43 @@ app.get('/api/draws/:drawId/matches', requireAuth as any, requireDrawAccess as a
   } catch (error) {
     console.error('List matches error:', error);
     res.status(500).json({ error: 'Failed to list matches' });
+  }
+});
+
+/**
+ * POST /api/draws/:drawId/swap-entries - Swap two entries in an elimination bracket
+ */
+app.post('/api/draws/:drawId/swap-entries', requireAuth as any, requireDrawOrganiser as any, async (req: DrawRequest, res: Response) => {
+  try {
+    const { bracket, entry1Id, entry2Id } = req.body;
+    const validBrackets: BracketType[] = ['winners', 'losers', 'grand_final'];
+
+    if (!entry1Id || !entry2Id) {
+      res.status(400).json({ error: 'Both entry IDs are required' });
+      return;
+    }
+
+    if (!bracket || !validBrackets.includes(bracket)) {
+      res.status(400).json({ error: 'Valid bracket is required' });
+      return;
+    }
+
+    const drawService = getDrawService();
+    const result = await drawService.swapEntries(req.drawId!, bracket, entry1Id, entry2Id);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message, code: result.error });
+      return;
+    }
+
+    const draw = await drawService.getDrawWithMatches(req.drawId!);
+    res.json({
+      success: true,
+      draw: draw ? transformDrawForFrontend(draw) : null,
+    });
+  } catch (error) {
+    console.error('Swap entries error:', error);
+    res.status(500).json({ error: 'Failed to swap entries' });
   }
 });
 

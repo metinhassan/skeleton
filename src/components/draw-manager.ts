@@ -4,7 +4,7 @@
  */
 
 import type { Division, DivisionListResponse } from '../types/division.js';
-import type { DrawWithMatches, Match, Standing, DrawListResponse, DrawResponse, StandingsResponse } from '../types/draw.js';
+import type { BracketType, DrawWithMatches, Match, Standing, DrawListResponse, DrawResponse, StandingsResponse } from '../types/draw.js';
 import { DrawConfigModal } from './draw-config-modal.js';
 import { toast } from './toast.js';
 
@@ -14,6 +14,12 @@ export interface DrawManagerOptions {
 }
 
 type DrawManagerState = 'loading' | 'no-divisions' | 'no-draw' | 'draft' | 'active' | 'completed';
+interface SwapSource {
+  matchId: string;
+  slot: 1 | 2;
+  entryId: string;
+  bracket: BracketType;
+}
 
 export class DrawManager {
   private container: HTMLElement;
@@ -25,6 +31,9 @@ export class DrawManager {
   private state: DrawManagerState = 'loading';
   private isLoadingDivisions = true;
   private configModal: DrawConfigModal | null = null;
+  private editBracket: BracketType | null = null;
+  private swapSource: SwapSource | null = null;
+  private isSwapping = false;
 
   constructor(options: DrawManagerOptions) {
     this.container = options.container;
@@ -205,22 +214,35 @@ export class DrawManager {
       `;
     }
 
+    const showEditButton = this.canEditBracket('winners');
+    const isEditingThisBracket = this.editBracket === 'winners';
+
     return `
-      <div class="bracket-wrapper">
-        ${rounds
-          .map((roundNum) => {
-            const matches = matchesByRound[roundNum];
-            const roundName = this.getRoundName(roundNum, rounds.length);
-            return `
-              <div class="bracket-round">
-                <div class="round-header">${roundName}</div>
-                <div class="bracket-matches">
-                  ${matches.map((match) => this.renderBracketMatch(match)).join('')}
+      <div class="draw-bracket-section">
+        <div class="draw-bracket-header">
+          <h3 class="draw-bracket-header__title">Main Bracket</h3>
+          ${showEditButton ? `
+            <button class="btn btn-outline btn-sm edit-draw-btn" data-bracket="winners">
+              ${isEditingThisBracket ? 'Done Editing' : 'Edit Draw'}
+            </button>
+          ` : ''}
+        </div>
+        <div class="bracket-wrapper">
+          ${rounds
+            .map((roundNum) => {
+              const matches = matchesByRound[roundNum];
+              const roundName = this.getRoundName(roundNum, rounds.length);
+              return `
+                <div class="bracket-round">
+                  <div class="round-header">${roundName}</div>
+                  <div class="bracket-matches">
+                    ${matches.map((match) => this.renderBracketMatch(match)).join('')}
+                  </div>
                 </div>
-              </div>
-            `;
-          })
-          .join('')}
+              `;
+            })
+            .join('')}
+        </div>
       </div>
     `;
   }
@@ -233,15 +255,24 @@ export class DrawManager {
     const lbMatches = matches.filter(m => m.bracket === 'losers');
     const gfMatches = matches.filter(m => m.bracket === 'grand_final');
 
-    const renderSection = (sectionMatches: Match[], title: string) => {
+    const renderSection = (sectionMatches: Match[], title: string, bracket: BracketType) => {
       const byRound = this.groupMatchesByRound(sectionMatches);
       const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
 
       if (rounds.length === 0) return '';
+      const showEditButton = this.canEditBracket(bracket);
+      const isEditingThisBracket = this.editBracket === bracket;
 
       return `
-        <div class="de-section">
-          <div class="de-section__title">${title}</div>
+        <div class="de-section draw-bracket-section">
+          <div class="draw-bracket-header">
+            <h3 class="draw-bracket-header__title de-section__title">${title}</h3>
+            ${showEditButton ? `
+              <button class="btn btn-outline btn-sm edit-draw-btn" data-bracket="${bracket}">
+                ${isEditingThisBracket ? 'Done Editing' : 'Edit Draw'}
+              </button>
+            ` : ''}
+          </div>
           <div class="bracket-wrapper">
             ${rounds.map(roundNum => {
               const roundMatches = byRound[roundNum];
@@ -261,19 +292,10 @@ export class DrawManager {
 
     return `
       <div class="double-elimination">
-        ${renderSection(wbMatches, 'Winners Bracket')}
-        ${renderSection(lbMatches, 'Losers Bracket')}
+        ${renderSection(wbMatches, 'Winners Bracket', 'winners')}
+        ${renderSection(lbMatches, 'Losers Bracket', 'losers')}
         ${gfMatches.length > 0 ? `
-          <div class="de-section">
-            <div class="de-section__title">Grand Final</div>
-            <div class="bracket-wrapper">
-              <div class="bracket-round">
-                <div class="bracket-matches">
-                  ${gfMatches.map(match => this.renderBracketMatch(match)).join('')}
-                </div>
-              </div>
-            </div>
-          </div>
+          ${renderSection(gfMatches, 'Grand Final', 'grand_final')}
         ` : ''}
       </div>
     `;
@@ -285,21 +307,40 @@ export class DrawManager {
     const isLive = match.status === 'in_progress';
     const isCompleted = match.status === 'completed' || match.status === 'walkover';
     const isBye = match.status === 'bye';
+    const bracket = this.getMatchBracket(match);
 
     const entry1IsWinner = match.winnerId && match.winnerId === match.entry1Id;
     const entry2IsWinner = match.winnerId && match.winnerId === match.entry2Id;
+    const entry1Editable = this.isEntryEditable(match, 1);
+    const entry2Editable = this.isEntryEditable(match, 2);
 
     const showScoreBtn = (this.state === 'active' || this.state === 'completed') && !isBye && match.entry1Id && match.entry2Id;
     const scoreBtnLabel = match.status === 'in_progress' ? 'Continue Scoring' : isCompleted ? 'View Score' : 'Score';
 
     return `
       <div class="bracket-match${isLive ? ' live' : ''}${isBye ? ' bye' : ''}">
-        <div class="bracket-entry${entry1IsWinner ? ' winner' : ''}${!match.entry1Id ? ' tbd' : ''}">
+        <div
+          class="bracket-entry${entry1IsWinner ? ' winner' : ''}${!match.entry1Id ? ' tbd' : ''}${entry1Editable ? ' bracket-entry--editable' : ''}"
+          data-swap-entry="true"
+          data-match-id="${match.id}"
+          data-entry-id="${match.entry1Id || ''}"
+          data-slot="1"
+          data-bracket="${bracket}"
+        >
           <span class="bracket-name">${this.escapeHtml(entry1Name)}</span>
+          ${this.renderSwapDropdown(match, 1)}
           ${isCompleted && match.entry1Score !== null ? `<span class="bracket-score">${match.entry1Score}</span>` : ''}
         </div>
-        <div class="bracket-entry${entry2IsWinner ? ' winner' : ''}${!match.entry2Id ? ' tbd' : ''}">
+        <div
+          class="bracket-entry${entry2IsWinner ? ' winner' : ''}${!match.entry2Id ? ' tbd' : ''}${entry2Editable ? ' bracket-entry--editable' : ''}"
+          data-swap-entry="true"
+          data-match-id="${match.id}"
+          data-entry-id="${match.entry2Id || ''}"
+          data-slot="2"
+          data-bracket="${bracket}"
+        >
           <span class="bracket-name">${this.escapeHtml(entry2Name)}</span>
+          ${this.renderSwapDropdown(match, 2)}
           ${isCompleted && match.entry2Score !== null ? `<span class="bracket-score">${match.entry2Score}</span>` : ''}
         </div>
         ${showScoreBtn ? `
@@ -308,6 +349,26 @@ export class DrawManager {
           </div>
         ` : ''}
       </div>
+    `;
+  }
+
+  private renderSwapDropdown(match: Match, slot: 1 | 2): string {
+    if (!this.swapSource || this.swapSource.matchId !== match.id || this.swapSource.slot !== slot) {
+      return '';
+    }
+
+    const options = this.getSwapCandidates(this.swapSource);
+    return `
+      <select class="draw-swap-select" data-swap-select="true" data-match-id="${match.id}" data-slot="${slot}">
+        <option value="">Swap with...</option>
+        ${options
+          .map((candidate) => `
+            <option value="${candidate.matchId}|${candidate.slot}|${candidate.entryId}|${candidate.bracket}">
+              ${this.escapeHtml(candidate.label)}
+            </option>
+          `)
+          .join('')}
+      </select>
     `;
   }
 
@@ -450,8 +511,191 @@ export class DrawManager {
   private hasStartedMatches(): boolean {
     if (!this.currentDraw) return false;
     return this.currentDraw.matches.some(
-      (m) => m.status === 'in_progress' || m.status === 'completed'
+      (m) => m.status === 'in_progress' || m.status === 'completed' || m.status === 'walkover'
     );
+  }
+
+  private getMatchBracket(match: Match): BracketType {
+    return match.bracket || 'winners';
+  }
+
+  private canEditBracket(bracket: BracketType): boolean {
+    if (!this.currentDraw) return false;
+    if (this.currentDraw.drawType !== 'single_elimination' && this.currentDraw.drawType !== 'double_elimination') {
+      return false;
+    }
+    if (this.state === 'completed' || this.hasStartedMatches()) return false;
+
+    let editableEntries = 0;
+    for (const match of this.currentDraw.matches) {
+      if (
+        this.getMatchBracket(match) !== bracket ||
+        match.roundNumber !== 1 ||
+        (match.status !== 'not_started' && match.status !== 'bye')
+      ) {
+        continue;
+      }
+      if (match.entry1Id) editableEntries++;
+      if (match.entry2Id) editableEntries++;
+      if (editableEntries > 1) return true;
+    }
+
+    return false;
+  }
+
+  private isEntryEditable(match: Match, slot: 1 | 2): boolean {
+    if (!this.currentDraw) return false;
+    if (this.editBracket !== this.getMatchBracket(match)) return false;
+    if (match.roundNumber !== 1) return false;
+    if (match.status !== 'not_started' && match.status !== 'bye') return false;
+    return slot === 1 ? !!match.entry1Id : !!match.entry2Id;
+  }
+
+  private getSwapCandidates(source: SwapSource): Array<SwapSource & { label: string }> {
+    if (!this.currentDraw) return [];
+
+    const entries: Array<SwapSource & { label: string }> = [];
+    for (const match of this.currentDraw.matches) {
+      if (this.getMatchBracket(match) !== source.bracket || match.roundNumber !== 1) {
+        continue;
+      }
+      if (match.status !== 'not_started' && match.status !== 'bye') {
+        continue;
+      }
+
+      if (match.entry1Id) {
+        entries.push({
+          matchId: match.id,
+          slot: 1,
+          entryId: match.entry1Id,
+          bracket: source.bracket,
+          label: match.entry1Name || 'Unknown Entry',
+        });
+      }
+      if (match.entry2Id) {
+        entries.push({
+          matchId: match.id,
+          slot: 2,
+          entryId: match.entry2Id,
+          bracket: source.bracket,
+          label: match.entry2Name || 'Unknown Entry',
+        });
+      }
+    }
+
+    return entries.filter((entry) => entry.entryId !== source.entryId);
+  }
+
+  private handleToggleEditBracket(bracket: BracketType): void {
+    if (!this.canEditBracket(bracket)) return;
+    if (this.editBracket === bracket) {
+      this.editBracket = null;
+      this.swapSource = null;
+    } else {
+      this.editBracket = bracket;
+      this.swapSource = null;
+    }
+    this.updateContent();
+  }
+
+  private handleSwapEntryClick(entryEl: HTMLElement): void {
+    if (this.isSwapping) return;
+    const matchId = entryEl.dataset.matchId;
+    const entryId = entryEl.dataset.entryId;
+    const slot = entryEl.dataset.slot;
+    const bracket = entryEl.dataset.bracket as BracketType | undefined;
+    if (!matchId || !entryId || !slot || !bracket) return;
+
+    const match = this.currentDraw?.matches.find((m) => m.id === matchId);
+    if (!match) return;
+
+    const parsedSlot = slot === '1' ? 1 : slot === '2' ? 2 : null;
+    if (!parsedSlot || !this.isEntryEditable(match, parsedSlot)) return;
+
+    if (
+      this.swapSource &&
+      this.swapSource.matchId === matchId &&
+      this.swapSource.slot === parsedSlot
+    ) {
+      this.swapSource = null;
+    } else {
+      this.swapSource = {
+        matchId,
+        slot: parsedSlot,
+        entryId,
+        bracket,
+      };
+    }
+
+    this.updateContent();
+  }
+
+  private async handleSwapSelectChange(selectEl: HTMLSelectElement): Promise<void> {
+    if (!this.swapSource || this.isSwapping) return;
+    const value = selectEl.value;
+    if (!value) {
+      this.swapSource = null;
+      this.updateContent();
+      return;
+    }
+
+    const [matchId, slotRaw, entryId, bracketRaw] = value.split('|');
+    const slot = slotRaw === '1' ? 1 : slotRaw === '2' ? 2 : null;
+    const bracket = bracketRaw as BracketType;
+
+    if (!matchId || !slot || !entryId || !bracket) {
+      toast.error('Invalid swap target');
+      return;
+    }
+
+    await this.submitSwap({
+      matchId,
+      slot,
+      entryId,
+      bracket,
+    });
+  }
+
+  private async submitSwap(target: SwapSource): Promise<void> {
+    if (!this.currentDraw || !this.swapSource || this.swapSource.bracket !== target.bracket) return;
+
+    this.isSwapping = true;
+    try {
+      const response = await fetch(`/api/draws/${this.currentDraw.id}/swap-entries`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          bracket: this.swapSource.bracket,
+          entry1Id: this.swapSource.entryId,
+          entry2Id: target.entryId,
+        }),
+      });
+
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Failed to swap entries (${response.status})`);
+        }
+        throw new Error(`Failed to swap entries (${response.status}). Ensure API route /api/draws/:drawId/swap-entries is available.`);
+      }
+
+      this.swapSource = null;
+      toast.success('Draw updated');
+      await this.loadDrawForDivision(true);
+    } catch (error) {
+      console.error('Failed to swap entries:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to swap entries');
+    } finally {
+      this.isSwapping = false;
+    }
+  }
+
+  private resetEditState(): void {
+    this.editBracket = null;
+    this.swapSource = null;
+    this.isSwapping = false;
   }
 
   private bindEvents(): void {
@@ -460,6 +704,7 @@ export class DrawManager {
     if (divisionSelect) {
       divisionSelect.addEventListener('change', () => {
         this.selectedDivisionId = divisionSelect.value;
+        this.resetEditState();
         this.loadDrawForDivision();
       });
     }
@@ -485,6 +730,22 @@ export class DrawManager {
     if (regenerateBtn) {
       regenerateBtn.addEventListener('click', () => this.handleRegenerate());
     }
+
+    this.container.querySelectorAll('.edit-draw-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const bracket = (btn as HTMLElement).dataset.bracket as BracketType | undefined;
+        if (bracket) this.handleToggleEditBracket(bracket);
+      });
+    });
+
+    this.container.querySelectorAll('[data-swap-entry="true"]').forEach((entry) => {
+      entry.addEventListener('click', () => this.handleSwapEntryClick(entry as HTMLElement));
+    });
+
+    this.container.querySelectorAll('[data-swap-select="true"]').forEach((select) => {
+      select.addEventListener('click', (event) => event.stopPropagation());
+      select.addEventListener('change', () => this.handleSwapSelectChange(select as HTMLSelectElement));
+    });
 
     // Score match buttons
     this.container.querySelectorAll('.score-match-btn').forEach((btn) => {
@@ -555,6 +816,7 @@ export class DrawManager {
       const draws = data.draws || [];
 
       if (draws.length === 0) {
+        this.resetEditState();
         this.state = 'no-draw';
         this.currentDraw = null;
         this.standings = [];
@@ -566,6 +828,7 @@ export class DrawManager {
     } catch (error) {
       console.error('Failed to fetch draw:', error);
       toast.error('Failed to load draw');
+      this.resetEditState();
       this.state = 'no-draw';
       this.currentDraw = null;
     } finally {
@@ -602,6 +865,11 @@ export class DrawManager {
         case 'completed':
           this.state = 'completed';
           break;
+      }
+
+      if (!this.editBracket || !this.canEditBracket(this.editBracket)) {
+        this.editBracket = null;
+        this.swapSource = null;
       }
 
       // Load standings for round robin
@@ -729,6 +997,7 @@ export class DrawManager {
       }
 
       // Reset state and show generate modal
+      this.resetEditState();
       this.currentDraw = null;
       this.state = 'no-draw';
       this.updateContent();

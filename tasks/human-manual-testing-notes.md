@@ -1,0 +1,2 @@
+- Need more informative errors for
+  - can't add players to comp that already started

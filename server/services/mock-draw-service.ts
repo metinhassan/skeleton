@@ -802,6 +802,86 @@ export class MockDrawService implements DrawService {
     return { success: true, data: updated! };
   }
 
+  async swapEntries(drawId: string, bracket: BracketType, entry1Id: string, entry2Id: string): Promise<DrawResult<void>> {
+    const db = getDatabase();
+    const draw = await this.getDraw(drawId);
+
+    if (!draw) {
+      return { success: false, error: 'draw_not_found', message: 'Draw not found' };
+    }
+
+    if (entry1Id === entry2Id) {
+      return { success: false, error: 'invalid_swap', message: 'Please select two different entries' };
+    }
+
+    if (draw.status === 'completed') {
+      return { success: false, error: 'draw_is_completed', message: 'Cannot edit a completed draw' };
+    }
+
+    if (draw.drawType !== 'single_elimination' && draw.drawType !== 'double_elimination') {
+      return { success: false, error: 'invalid_swap', message: 'Entry swapping is only available for elimination draws' };
+    }
+
+    const lockedCountRow = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM matches
+      WHERE draw_id = ? AND status IN ('in_progress', 'completed', 'walkover', 'retired')
+    `).get(drawId) as { count: number };
+
+    if ((lockedCountRow?.count || 0) > 0) {
+      return {
+        success: false,
+        error: 'invalid_swap',
+        message: 'Cannot edit draw after matches have started',
+      };
+    }
+
+    const roundOneMatches = db.prepare(`
+      SELECT *
+      FROM matches
+      WHERE draw_id = ? AND bracket = ? AND round_number = 1
+      ORDER BY match_number
+    `).all(drawId, bracket) as DbMatch[];
+
+    if (roundOneMatches.length === 0) {
+      return { success: false, error: 'invalid_swap', message: 'No editable matches found in this bracket' };
+    }
+
+    const findSlot = (entryId: string): { matchId: string; slot: 1 | 2 } | null => {
+      for (const match of roundOneMatches) {
+        if (match.entry1_id === entryId) return { matchId: match.id, slot: 1 };
+        if (match.entry2_id === entryId) return { matchId: match.id, slot: 2 };
+      }
+      return null;
+    };
+
+    const slot1 = findSlot(entry1Id);
+    const slot2 = findSlot(entry2Id);
+
+    if (!slot1 || !slot2) {
+      return { success: false, error: 'entry_not_found', message: 'Both entries must be in round 1 of the selected bracket' };
+    }
+
+    const now = new Date().toISOString();
+    if (slot1.matchId === slot2.matchId) {
+      db.prepare(`
+        UPDATE matches
+        SET entry1_id = ?, entry2_id = ?, updated_at = ?
+        WHERE id = ?
+      `).run(entry2Id, entry1Id, now, slot1.matchId);
+    } else {
+      const slot1Column = slot1.slot === 1 ? 'entry1_id' : 'entry2_id';
+      const slot2Column = slot2.slot === 1 ? 'entry1_id' : 'entry2_id';
+
+      db.prepare(`UPDATE matches SET ${slot1Column} = ?, updated_at = ? WHERE id = ?`)
+        .run(entry2Id, now, slot1.matchId);
+      db.prepare(`UPDATE matches SET ${slot2Column} = ?, updated_at = ? WHERE id = ?`)
+        .run(entry1Id, now, slot2.matchId);
+    }
+
+    return { success: true, data: undefined };
+  }
+
   async recordResult(matchId: string, input: RecordResultInput): Promise<DrawResult<Match>> {
     const db = getDatabase();
     const match = await this.getMatch(matchId);

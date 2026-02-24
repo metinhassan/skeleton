@@ -697,6 +697,21 @@ export class MockPlayerService implements PlayerService {
       return { success: false, error: 'division_not_found', message: 'Division not found' };
     }
 
+    // Check if draw is already in progress or completed
+    const activeDraw = db
+      .prepare(`SELECT status FROM draws WHERE division_id = ? AND status IN ('in_progress', 'completed') LIMIT 1`)
+      .get(divisionId) as { status: string } | undefined;
+
+    if (activeDraw) {
+      return {
+        success: true,
+        data: {
+          created: 0,
+          failed: playerIds.map(playerId => ({ playerId, error: 'Draw is already in progress' })),
+        },
+      };
+    }
+
     const failed: { playerId: string; error: string }[] = [];
     let createdCount = 0;
     const now = new Date().toISOString();
@@ -1095,6 +1110,31 @@ export class MockPlayerService implements PlayerService {
     } catch (error) {
       console.error('Failed to withdraw registration:', error);
       return { success: false, error: 'operation_failed', message: 'Failed to withdraw registration' };
+    }
+  }
+
+  async withdrawEntry(entryId: string): Promise<PlayerResult<void>> {
+    const entry = await this.getEntry(entryId);
+    if (!entry) {
+      return { success: false, error: 'entry_not_found', message: 'Entry not found' };
+    }
+
+    if (entry.status !== 'pending' && entry.status !== 'approved') {
+      return { success: false, error: 'operation_failed', message: 'Cannot withdraw this entry' };
+    }
+
+    const db = getDatabase();
+    const now = new Date();
+
+    try {
+      db.prepare(`
+        UPDATE entries SET status = 'withdrawn', updated_at = ? WHERE id = ?
+      `).run(now.toISOString(), entryId);
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      console.error('Failed to withdraw entry:', error);
+      return { success: false, error: 'operation_failed', message: 'Failed to withdraw entry' };
     }
   }
 

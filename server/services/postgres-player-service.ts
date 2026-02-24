@@ -679,6 +679,22 @@ export class PostgresPlayerService implements PlayerService {
       return { success: false, error: 'division_not_found', message: 'Division not found' };
     }
 
+    // Check if draw is already in progress or completed
+    const drawResult = await pool.query<{ status: string }>(
+      `SELECT d.status FROM draws d WHERE d.division_id = $1 AND d.status IN ('in_progress', 'completed') LIMIT 1`,
+      [divisionId]
+    );
+
+    if (drawResult.rows.length > 0) {
+      return {
+        success: true,
+        data: {
+          created: 0,
+          failed: playerIds.map(playerId => ({ playerId, error: 'Draw is already in progress' })),
+        },
+      };
+    }
+
     const created: number[] = [];
     const failed: { playerId: string; error: string }[] = [];
     const client = await pool.connect();
@@ -1166,6 +1182,31 @@ export class PostgresPlayerService implements PlayerService {
     } catch (error) {
       console.error('Failed to withdraw registration:', error);
       return { success: false, error: 'operation_failed', message: 'Failed to withdraw registration' };
+    }
+  }
+
+  async withdrawEntry(entryId: string): Promise<PlayerResult<void>> {
+    const entry = await this.getEntry(entryId);
+    if (!entry) {
+      return { success: false, error: 'entry_not_found', message: 'Entry not found' };
+    }
+
+    if (entry.status !== 'pending' && entry.status !== 'approved') {
+      return { success: false, error: 'operation_failed', message: 'Cannot withdraw this entry' };
+    }
+
+    const pool = getPool();
+
+    try {
+      await pool.query(
+        `UPDATE entries SET status = 'withdrawn' WHERE id = $1`,
+        [entryId]
+      );
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      console.error('Failed to withdraw entry:', error);
+      return { success: false, error: 'operation_failed', message: 'Failed to withdraw entry' };
     }
   }
 

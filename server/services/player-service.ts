@@ -247,6 +247,7 @@ export interface PlayerService {
   approveRegistration(entryId: string): Promise<PlayerResult<Entry>>;
   rejectRegistration(entryId: string, reason?: string): Promise<PlayerResult<Entry>>;
   withdrawRegistration(entryId: string, userId: string): Promise<PlayerResult<void>>;
+  withdrawEntry(entryId: string): Promise<PlayerResult<void>>;
 
   // Partner requests (Epic 4)
   createPartnerRequest(input: CreatePartnerRequestInput): Promise<PlayerResult<PartnerRequest>>;

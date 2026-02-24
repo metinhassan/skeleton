@@ -20,6 +20,7 @@ export interface EntryListOptions {
   onDeleteEntry?: (entry: Entry) => void;
   onApproveEntry?: (entry: Entry) => void;
   onRejectEntry?: (entry: Entry) => void;
+  onWithdrawEntry?: (entry: Entry) => void;
 }
 
 export class EntryList {
@@ -32,6 +33,7 @@ export class EntryList {
   private onDeleteEntry?: (entry: Entry) => void;
   private onApproveEntry?: (entry: Entry) => void;
   private onRejectEntry?: (entry: Entry) => void;
+  private onWithdrawEntry?: (entry: Entry) => void;
 
   private entries: Entry[] = [];
   private isLoading = true;
@@ -49,6 +51,7 @@ export class EntryList {
     this.onDeleteEntry = options.onDeleteEntry;
     this.onApproveEntry = options.onApproveEntry;
     this.onRejectEntry = options.onRejectEntry;
+    this.onWithdrawEntry = options.onWithdrawEntry;
 
     this.render();
     this.fetchEntries();
@@ -249,6 +252,7 @@ export class EntryList {
 
     const canEdit = this.canEditEntry(entry);
     const canRemove = this.canRemoveEntry(entry);
+    const canWithdraw = this.canWithdrawEntry(entry);
     const isPending = entry.status === 'pending';
 
     return `
@@ -272,6 +276,7 @@ export class EntryList {
             <button class="btn btn-primary btn-sm approve-entry-btn" data-id="${entry.id}">Approve</button>
             <button class="btn btn-outline btn-sm reject-entry-btn" data-id="${entry.id}">Reject</button>
           ` : ''}
+          ${canWithdraw ? `<button class="btn btn-outline btn-sm withdraw-entry-btn" data-id="${entry.id}">Withdraw</button>` : ''}
           ${canRemove ? `<button class="btn btn-outline btn-sm remove-entry-btn" data-id="${entry.id}">Remove</button>` : ''}
         </td>
       </tr>
@@ -297,6 +302,10 @@ export class EntryList {
       this.drawStatus !== 'in_progress' &&
       this.drawStatus !== 'completed'
     );
+  }
+
+  private canWithdrawEntry(entry: Entry): boolean {
+    return entry.status === 'approved' || entry.status === 'pending';
   }
 
   private canRemoveEntry(entry: Entry): boolean {
@@ -458,6 +467,19 @@ export class EntryList {
         const entry = this.entries.find((en) => en.id === id);
         if (entry) {
           this.handleReject(entry);
+        }
+      });
+    });
+
+    // Withdraw buttons
+    const withdrawBtns = this.container.querySelectorAll('.withdraw-entry-btn');
+    withdrawBtns.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        const entry = this.entries.find((en) => en.id === id);
+        if (entry) {
+          this.onWithdrawEntry?.(entry);
         }
       });
     });

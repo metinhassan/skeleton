@@ -307,9 +307,30 @@ export class BulkAddPlayersModal {
       if (result.created > 0 && result.failed.length === 0) {
         toast.success(`Added ${result.created} player${result.created !== 1 ? 's' : ''} to ${divisionName}`);
       } else if (result.created > 0 && result.failed.length > 0) {
-        toast.warning(`Added ${result.created} of ${this.playerCount} players. ${result.failed.length} failed.`);
+        const summary = this.summariseFailures(result.failed);
+        toast.warning(`Added ${result.created} of ${result.created + result.failed.length} players to ${divisionName}. ${summary}`);
       } else {
-        toast.error('No players were added.');
+        // All failed
+        const failedByReason = this.groupFailures(result.failed);
+        const reasons = Object.keys(failedByReason);
+
+        if (reasons.length === 1) {
+          const reason = reasons[0];
+          const count = failedByReason[reason];
+          if (reason === 'Already entered in this division') {
+            toast.error(count === 1
+              ? `Player is already enrolled in ${divisionName}.`
+              : `All ${count} players are already enrolled in ${divisionName}.`);
+          } else if (reason === 'Player not found') {
+            toast.error('Players could not be found. They may have been deleted.');
+          } else if (reason === 'Draw is already in progress') {
+            toast.error('Cannot add players \u2014 the draw is already in progress.');
+          } else {
+            toast.error(`No players were added. ${this.summariseFailures(result.failed)}`);
+          }
+        } else {
+          toast.error(`No players were added. ${this.summariseFailures(result.failed)}`);
+        }
       }
 
       this.close(true);
@@ -349,6 +370,30 @@ export class BulkAddPlayersModal {
         }
       }, 200);
     }
+  }
+
+  private friendlyError(error: string): string {
+    const map: Record<string, string> = {
+      'Already entered in this division': 'already enrolled',
+      'Player not found': 'not found',
+      'Draw is already in progress': 'draw already in progress',
+    };
+    return map[error] || 'failed';
+  }
+
+  private groupFailures(failed: { playerId: string; error: string }[]): Record<string, number> {
+    const groups: Record<string, number> = {};
+    for (const f of failed) {
+      groups[f.error] = (groups[f.error] || 0) + 1;
+    }
+    return groups;
+  }
+
+  private summariseFailures(failed: { playerId: string; error: string }[]): string {
+    const groups = this.groupFailures(failed);
+    return Object.entries(groups)
+      .map(([error, count]) => `${count} ${this.friendlyError(error)}`)
+      .join(', ');
   }
 
   private escapeHtml(text: string): string {

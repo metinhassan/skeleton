@@ -113,6 +113,7 @@ export type DrawErrorCode =
   | 'match_not_found'
   | 'division_not_found'
   | 'entry_not_found'
+  | 'invalid_swap'
   | 'invalid_winner'
   | 'draw_already_active'
   | 'draw_is_active'
@@ -140,6 +141,7 @@ export interface DrawService {
   getMatch(matchId: string): Promise<Match | null>;
   getDrawMatches(drawId: string): Promise<Match[]>;
   updateMatch(matchId: string, input: UpdateMatchInput): Promise<DrawResult<Match>>;
+  swapEntries(drawId: string, bracket: BracketType, entry1Id: string, entry2Id: string): Promise<DrawResult<void>>;
   recordResult(matchId: string, input: RecordResultInput): Promise<DrawResult<Match>>;
   clearResult(matchId: string): Promise<DrawResult<Match>>;
 

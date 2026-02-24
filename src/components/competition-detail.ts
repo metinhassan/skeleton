@@ -502,6 +502,7 @@ export class CompetitionDetail {
       onAddEntry: () => this.showCreateEntry(),
       onEditEntry: (entry) => this.showEditEntry(entry),
       onDeleteEntry: (entry) => this.handleDeleteEntry(entry),
+      onWithdrawEntry: (entry) => this.handleWithdrawEntry(entry),
       onApproveEntry: () => this.handleEntryStatusChange(),
       onRejectEntry: () => this.handleEntryStatusChange(),
     });
@@ -610,6 +611,35 @@ export class CompetitionDetail {
     } catch (error) {
       console.error('Failed to remove entry:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to remove entry');
+    }
+  }
+
+  private async handleWithdrawEntry(entry: Entry): Promise<void> {
+    const entryName = this.getEntryDisplayName(entry);
+    const confirmed = await this.showConfirmation(
+      'Withdraw Entry',
+      `Are you sure you want to withdraw "${entryName}"?`,
+      'Withdraw'
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`/api/divisions/${this.selectedDivisionId}/entries/${entry.id}/withdraw`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to withdraw entry');
+      }
+
+      toast.success('Entry withdrawn successfully');
+      this.refreshEntryList();
+    } catch (error) {
+      console.error('Failed to withdraw entry:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to withdraw entry');
     }
   }
 
